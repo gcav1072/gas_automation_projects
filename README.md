@@ -74,7 +74,7 @@ LabView Simulation
 
 Ensure NI LabView 2020 (or later), NI-VISA and MakerHub Yoolkit drivers are installed.
 
-Open labview_scada/main_scada.vi.
+Open labview/main_scada.vi.
 
 For hardware mode: Connect Arduino to COM port and upload arduino_code.ino.
 
