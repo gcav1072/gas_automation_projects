@@ -6,13 +6,13 @@ This repository hosts my capstone engineering projects focusing on Process Contr
 
 It demonstrates the full engineering lifecycle: from mathematical modeling of fluid dynamics to closed-loop PID control and final hardware deployment using SCADA interfaces.
 
-🚀 Project 1: Automated Tank Level Control System (SCADA)
+## 🚀 Project 1: Automated Tank Level Control System (SCADA)
 
 Tech Stack: LabView (G-Code), Arduino (C++), NI VISA.
 
 This project implements a hydrodynamic control system in three evolutionary phases:
 
-Phase 1: Mathematical Modeling (Open Loop)
+### Phase 1: Mathematical Modeling (Open Loop)
 
 Development of a dynamic simulation based on Bernoulli's Principle to validate the physical behavior of tank discharge rates without automatic control.
 
@@ -23,7 +23,7 @@ Development of a dynamic simulation based on Bernoulli's Principle to validate t
 <img src="assets/P1PH1b.png" alt="Open Loop Simulation: Block Diagram" width="700">
 </p>
 
-Phase 2: PID Control Algorithm (Closed Loop)
+### Phase 2: PID Control Algorithm (Closed Loop)
 
 Implementation of a custom PID (Proportional-Integral-Derivative) algorithm designed from scratch in LabView.
 
@@ -35,7 +35,8 @@ Features: Real-time error calculation (SP - PV), dynamic gain tuning, and distur
 <p align="center">
 <img src="assets/P1PH2b.png" alt="PID Logic: Block Diagram" width="700">
 </p>
-Phase 3: Hardware Integration (SCADA)
+
+### Phase 3: Hardware Integration (SCADA)
 
 Final deployment interfacing LabView with an Arduino Uno via Serial/VISA protocols.
 
@@ -49,7 +50,8 @@ Actuation: PWM control of the pump to maintain tank levels within 1% of the Setp
 <p align="center">
 <img src="assets/P1PH3b.png" alt="Final SCADA Interface: Block Diagram" width="800">
 </p>
-⚗️ Project 2: FUG Gas Fractionation Calculator
+
+## ⚗️ Project 2: FUG Gas Fractionation Calculator
 
 Tech Stack: Microsoft Excel, VBA (Visual Basic for Applications).
 
@@ -78,7 +80,7 @@ Open labview/main_scada.vi.
 
 For hardware mode: Connect Arduino to COM port and upload arduino_code.ino.
 
-FUG Calculator
+## FUG Calculator
 
 Open fug_simulation/FUG_Calculator_v1.xlsm.
 
@@ -86,8 +88,10 @@ Enable Macros when prompted by Excel.
 
 Click "Start Simulation" on the main dashboard.
 
-👨‍💻 Author
+## 👨‍💻 Author
 
 Gabriel Astudillo Gas Engineer | Automation Specialist
 
 LinkedIn Profile: https://www.linkedin.com/in/gcav1072/
+
+Note: Some LAS archives were taken from the “Force-2020-Machine-Learning-competition” repository. Bormann, P., Aursand, P., & Dilib, F. (2020). FORCE Machine Learning Competition [Computer software]. https://github.com/bolgebrygg/Force-2020-Machine-Learning-competition
