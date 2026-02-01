@@ -2,7 +2,7 @@
 
 📌 Overview
 
-This repository hosts my capstone engineering projects focusing on Process Control, Automation, and Chemical Engineering Simulation.
+This repository hosts my capstone engineering projects focusing on Process Control, Petrophysics, Automation, and Chemical Engineering Simulation.
 
 It demonstrates the full engineering lifecycle: from mathematical modeling of fluid dynamics to closed-loop PID control and final hardware deployment using SCADA interfaces.
 
