@@ -75,7 +75,8 @@ def graficar_triple_combo(df, nombre_pozo="Pozo Desconocido"):
             hay_res = True
 
     if hay_res:
-        ax[1].set_xlim(0.2, 2000)
+        ax[1].set_xscale('log')
+        ax[1].set_xlim(0.2, 10000)
         ax[1].legend(loc='lower center', bbox_to_anchor=(0.5, 1.05), fontsize='small') 
     else:
         ax[1].text(0.5, 0.5, "SIN RESISTIVIDAD", ha='center', transform=ax[1].transAxes, color='red')
@@ -135,6 +136,37 @@ if __name__ == "__main__":
     archivo_nombre = input("Nombre del archivo (ej: 7_1-1.las): ")
     ruta_completa = os.path.join(las_folder, archivo_nombre)
     
+    # --- NUEVO: SELECTOR DE LITOLOGÍA ---
+    print("\nSeleccione la Matriz de referencia:")
+    print("1. Arenisca (Sandstone) [2.65 g/cc] - (Enter por defecto)")
+    print("2. Caliza (Limestone)   [2.71 g/cc]")
+    print("3. Dolomía (Dolomite)   [2.87 g/cc]")
+    print("4. Personalizado")
+    
+    opcion = input("Opción > ").strip()
+    
+    # Lógica de selección robusta
+    if opcion == '2':
+        rho_ma = 2.71
+        litologia = "Caliza"
+    elif opcion == '3':
+        rho_ma = 2.87
+        litologia = "Dolomía"
+    elif opcion == '4':
+        try:
+            rho_ma = float(input("Introduce densidad de matriz (g/cc): "))
+            litologia = f"Personalizada ({rho_ma})"
+        except ValueError:
+            print("Valor inválido. Se usará Arenisca (2.65).")
+            rho_ma = 2.65
+            litologia = "Arenisca"
+    else:
+        # Por defecto (Opción 1 o vacío)
+        rho_ma = 2.65
+        litologia = "Arenisca"
+
+    print(f"\nProcesando '{archivo_nombre}' como litología: {litologia}...")
+    
     df_pozo = inspeccionar_las(ruta_completa)
     
     if df_pozo is not None:
@@ -142,7 +174,7 @@ if __name__ == "__main__":
         df_calculado = calcular_vsh(df_pozo)
         
         # 2. Normalizar Porosidades (Arregla las líneas verticales)
-        df_calculado = normalizar_porosidad(df_calculado)
-        
+        df_calculado = normalizar_porosidad(df_calculado, rho_matrix=rho_ma)
+
         # 3. Graficar
         graficar_triple_combo(df_calculado, nombre_pozo=archivo_nombre)

@@ -5,13 +5,13 @@ import os
 
 # --- CONFIGURACIÓN DE ALIAS Y FUNCIONES ---
 
-# 1. Tu diccionario maestro (Edítalo si descubres nuevos nombres raros)
+# 1. Tu diccionario maestro
 ALIAS_CFG = {
     'GR':   ['GR', 'GAPI', 'GAM', 'GR_EDTC', 'CGR', 'NGAP', 'SGR'], # Added SGR as it was in original
     'RDEP': ['RDEP', 'RT', 'ILD', 'LLD', 'AT90', 'RES_DEEP', 'HDRS'],
     'RMED': ['RMED', 'ILM', 'LLS', 'AT30', 'AT20', 'RES_MED', 'IMPH'], # Added IMPH
-    'NPHI': ['NPHI', 'TNPH', 'NPOR', 'CNPOR', 'CNC', 'NPSS', 'NPLS'], # Added NPLS
-    'RHOB': ['RHOB', 'RHOZ', 'DEN', 'ZDEN', 'BDEN', 'RHOM', 'DPLS', 'DPHI', 'PEF'], # Merged DPHI list here as RHOB alias group seems to be the target for density, but let's be careful. 
+    'NPHI': ['NPHI', 'TNPH', 'NPOR', 'CNPOR', 'CNC', 'NPSS', 'NPLS', 'CNL'], # Added NPLS
+    'RHOB': ['RHOB', 'RHOZ', 'DEN', 'ZDEN', 'BDEN', 'RHOM', 'DPLS', 'DPHI'], # Merged DPHI list here as RHOB alias group seems to be the target for density, but let's be careful. 
     # Original 'DPHI' list: ['DPLS', 'DPHI', 'RHOB', 'ZDEN', 'DEN', 'PEF']. 
     # Snippet 'RHOB' list: ['RHOB', 'RHOZ', 'DEN', 'ZDEN', 'BDEN', 'RHOM'].
     # I will keep them separate or merge intelligently. The snippet asks for RHOB. 
@@ -98,7 +98,13 @@ def calcular_vsh(df):
 
 def normalizar_porosidad(df, rho_matrix=2.65, rho_fluid=1.0):
     print("\n--- NORMALIZANDO CURVAS DE POROSIDAD ---")
-    
+    """
+    Calcula porosidad densidad usando la matriz variable.
+    Args:
+        rho_matrix (float): Densidad de matriz (2.65 Sand, 2.71 Lime, 2.87 Dol)
+        rho_fluid (float): Densidad del fluido (1.0 Agua, 0.85 Aceite, etc.)
+    """
+    print(f"\n--- NORMALIZANDO CURVAS (Matriz: {rho_matrix} g/cc) ---")   
     # Usamos obtener_curva para extraer las series (ya limpias de nulos del sistema)
     # y manejamos NANs locales.
     den = obtener_curva(df, 'RHOB') 
