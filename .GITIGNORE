@@ -6,8 +6,10 @@ env/
 
 # Archivos de caché de Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
+*.pyc
 
 # Configuraciones de VS Code (opcional)
 .vscode/
