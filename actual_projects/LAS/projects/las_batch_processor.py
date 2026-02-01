@@ -21,7 +21,7 @@ def setup_folders():
             os.makedirs(folder)
 
 def procesar_lote(matriz_rho=2.65, cutoff_vsh=0.5, cutoff_phi=8.0, 
-                 rw=0.05, a=1, m=2, n=2, cutoff_sw=0.5):
+                rw=0.05, a=1, m=2, n=2, cutoff_sw=0.5):
     
     setup_folders()
     
@@ -83,9 +83,15 @@ def procesar_lote(matriz_rho=2.65, cutoff_vsh=0.5, cutoff_phi=8.0,
             
             if {'VSH', 'DPHI_FINAL', 'SW'}.issubset(df.columns):
                 # Máscara Lógica de PAY (Cumple TODO)
+                if 'NPHI_FINAL' in df.columns:
+                    phi_total = (df['DPHI_FINAL'] + df['NPHI_FINAL']) / 2
+                else:
+                    phi_total = df['DPHI_FINAL']
+
+                # Máscara Lógica de PAY (Cumple TODO)
                 mask_pay = (
                     (df['VSH'] < cutoff_vsh) & 
-                    (df['DPHI_FINAL'] >= cutoff_phi) & 
+                    (phi_total >= cutoff_phi) &  # <--- CORREGIDO (Promedio)
                     (df['SW'] < cutoff_sw)
                 )
                 
