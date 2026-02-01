@@ -96,7 +96,7 @@ def calcular_vsh(df):
     df['VSH'] = np.clip(vsh, 0, 1) # Guardamos en el DF
     return df
 
-def normalizar_porosidad(df):
+def normalizar_porosidad(df, rho_matrix=2.65, rho_fluid=1.0):
     print("\n--- NORMALIZANDO CURVAS DE POROSIDAD ---")
     
     # Usamos obtener_curva para extraer las series (ya limpias de nulos del sistema)
@@ -117,11 +117,9 @@ def normalizar_porosidad(df):
 
         # Si el promedio es > 1.5, es Densidad (g/cc) --> Convertir
         if promedio > 1.5:
-            print(f"Detectado RHOB/Densidad (media: {promedio:.2f}). Convirtiendo a Porosidad...")
-            rho_ma = 2.65
-            rho_fl = 1.0
-            # Guardamos como DPHI_FINAL
-            df['DPHI_FINAL'] = ((rho_ma - den) / (rho_ma - rho_fl)) * 100
+            print(f"Detectado RHOB. Usando Matrix={rho_matrix}, Fluid={rho_fluid}")
+            # Guardamos como DPHI_FINAL (usando variables, no constantes)
+            df['DPHI_FINAL'] = ((rho_matrix - den) / (rho_matrix - rho_fluid)) * 100
         
         # Si no, verificamos si es Porosidad Decimal (v/v) --> Multiplicar por 100
         elif datos_validos.max() <= 1.0: 
@@ -145,5 +143,16 @@ def normalizar_porosidad(df):
             df['NPHI_FINAL'] = neu * 100
         else:
             df['NPHI_FINAL'] = neu
+    
+    if 'DPHI_FINAL' in df.columns:
+        df['DPHI_FINAL'] = df['DPHI_FINAL'].clip(lower=-5, upper=60)
+    if 'NPHI_FINAL' in df.columns:
+        df['NPHI_FINAL'] = df['NPHI_FINAL'].clip(lower=-5, upper=60)
+    
+    # Clip entre -5% y 60%. 
+    # ¿Por qué -5 y no 0? Para que si hay Anhidrita (matriz pesada), 
+    # veas la curva irse un poco a la izquierda (aviso visual) en vez de 
+    # aplanarse en cero artificialmente.
+    # El neutrón a veces lee -2% o -3% en gas muy seco o matrices apretadas.
             
     return df

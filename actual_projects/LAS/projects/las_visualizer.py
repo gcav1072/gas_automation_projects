@@ -25,8 +25,19 @@ def graficar_triple_combo(df, nombre_pozo="Pozo Desconocido"):
         ax[0].plot(gr, depth, color='green', linewidth=0.5)
         ax[0].set_xlabel("Gamma Ray [gAPI]", color='green', fontsize=10)
         ax[0].set_xlim(0, 150)
-        ax[0].fill_betweenx(depth, gr, 0, color='yellow', alpha=0.3)
-        ax[0].fill_betweenx(depth, gr, 0, color='green', alpha=0.3)
+
+        gr_cutoff = 75 
+        ax[0].plot(gr, depth, color='green', linewidth=0.5)
+
+        # Relleno condicional:
+        # 1. Relleno Amarillo (Arenas) cuando GR < Cutoff
+        ax[0].fill_betweenx(depth, gr, gr_cutoff, where=(gr < gr_cutoff), 
+                    interpolate=True, color='gold', alpha=0.4)
+
+        # 2. Relleno Verde (Arcillas) cuando GR > Cutoff
+        ax[0].fill_betweenx(depth, gr, gr_cutoff, where=(gr >= gr_cutoff), 
+                    interpolate=True, color='darkgreen', alpha=0.4)
+
         ax[0].set_axisbelow(True) # Grid al fondo
     else:
         ax[0].text(0.5, 0.5, "SIN DATOS GR", ha='center', transform=ax[0].transAxes, color='red')
@@ -74,10 +85,8 @@ def graficar_triple_combo(df, nombre_pozo="Pozo Desconocido"):
     ax[1].set_title("Track 2: Fluidos")
 
     # -------------------------------------------------------------------------
-    # TRACK 3: POROSIDAD (CORREGIDO)
+    # TRACK 3: POROSIDAD
     # -------------------------------------------------------------------------
-    # AQUI ESTABA EL ERROR: Antes buscabas curvas crudas, ahora usamos las calculadas
-    
     hay_porosidad = False
     
     # 1. Neutrón Final (Ya normalizado a %)
