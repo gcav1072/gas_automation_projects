@@ -3,23 +3,18 @@ import pandas as pd
 import numpy as np
 import os
 
-# --- CONFIGURACIÓN DE ALIAS Y FUNCIONES ---
-
-# 1. Tu diccionario maestro
+# --- CONFIGURACIÓN DE ALIAS ---
 ALIAS_CFG = {
-    'GR':   ['GR', 'GAPI', 'GAM', 'GR_EDTC', 'CGR', 'NGAP', 'SGR'], # Added SGR as it was in original
-    'RDEP': ['RDEP', 'RT', 'ILD', 'LLD', 'AT90', 'RES_DEEP', 'HDRS'],
-    'RMED': ['RMED', 'ILM', 'LLS', 'AT30', 'AT20', 'RES_MED', 'IMPH'], # Added IMPH
-    'NPHI': ['NPHI', 'TNPH', 'NPOR', 'CNPOR', 'CNC', 'NPSS', 'NPLS', 'CNL'], # Added NPLS
-    'RHOB': ['RHOB', 'RHOZ', 'DEN', 'ZDEN', 'BDEN', 'RHOM', 'DPLS', 'DPHI'], # Merged DPHI list here as RHOB alias group seems to be the target for density, but let's be careful. 
-    # Original 'DPHI' list: ['DPLS', 'DPHI', 'RHOB', 'ZDEN', 'DEN', 'PEF']. 
-    # Snippet 'RHOB' list: ['RHOB', 'RHOZ', 'DEN', 'ZDEN', 'BDEN', 'RHOM'].
-    # I will keep them separate or merge intelligently. The snippet asks for RHOB. 
-    # I will add DPHI/DPLS to RHOB list as alternate density/porosity sources if that's the intent, 
-    # BUT `normalizar_porosidad` distinguishes between Density (g/cc) and Porosity (v/v or %).
-    # The snippet `obtener_curva(df, 'RHOB')` implies grabbing Density. 
-    # I will stick to the snippet's ALIAS_CFG for RHOB but add the extra ones from the original file to it to be safe.
-    'DT':   ['DT', 'DTCO', 'DTC', 'DT4P', 'AC']
+    'GR':   ['GR', 'GAPI', 'GAM', 'GR_EDTC', 'CGR', 'NGAP', 'SGR'],
+    'RDEP': ['RDEP', 'RT', 'ILD', 'LLD', 'AT90', 'RES_DEEP', 'HDRS', 'RES_DEP'],
+    'RMED': ['RMED', 'ILM', 'LLS', 'AT30', 'AT20', 'RES_MED', 'IMPH'],
+    'NPHI': ['NPHI', 'TNPH', 'NPOR', 'CNPOR', 'CNC', 'NPSS', 'NPLS', 'CNL'],
+    'RHOB': ['RHOB', 'RHOZ', 'DEN', 'ZDEN', 'BDEN', 'RHOM'], 
+    'DPHI': ['DPLS', 'DPHI', 'DPHZ', 'DPOR'], 
+    'DT':   ['DT', 'DTCO', 'DTC', 'DT4P', 'AC'],
+    # NUEVOS ALIAS PARA CALIDAD
+    'CALI': ['CALI', 'CAL', 'CALS', 'HCAL', 'DCAL', 'CLDC'],
+    'BS':   ['BS', 'BIT', 'BIT_SIZE', 'BSZ']
 }
 
 def obtener_curva(df, mnemonico_objetivo):
@@ -29,136 +24,169 @@ def obtener_curva(df, mnemonico_objetivo):
     
     for alias in candidatos:
         if alias in cols_upper:
-            nombre_real = cols_upper[alias]
-            print(f"   -> {mnemonico_objetivo}: Encontrado como '{nombre_real}'")
-            return df[nombre_real]
+            return df[cols_upper[alias]]
             
-    print(f"⚠️  WARNING: No se encontró '{mnemonico_objetivo}'. Se llenará con NaN.")
     return pd.Series(np.nan, index=df.index)
+
+def normalizar_unidades_profundidad(las, df):
+    unidad = ""
+    if 'STRT' in las.well:
+        unidad = str(las.well['STRT'].unit).upper()
+    elif 'DEPT' in las.curves:
+        unidad = str(las.curves['DEPT'].unit).upper()
+        
+    es_pies = any(x in unidad for x in ['F', 'FT', 'FEET'])
+    
+    if es_pies:
+        # 1 ft = 0.3048 m
+        df.index = df.index * 0.3048
+        return df, True
+    else:
+        return df, False
 
 def inspeccionar_las(las_file):
     try:
-        # --- CARGA DE DATOS ---
-        print(f"--- REPORTE DEL POZO: {os.path.basename(las_file)} ---")
         las = lasio.read(las_file)
-        df = las.df() # Convertir a DataFrame
+        df = las.df()
 
-        # 2.1 LIMPIEZA CRÍTICA DE NULOS
-        val_nulo = las.well.NULL.value if 'NULL' in las.well else None
-        
-        if val_nulo is not None:
-            df.replace(val_nulo, np.nan, inplace=True)
-        else:
-            # Si el header no lo dice, forzamos el estándar común
-            df.replace(-999.25, np.nan, inplace=True)
-            
-        # Limpieza extra: Eliminar filas donde TODO sea NaN
+        val_nulo = las.well.NULL.value if 'NULL' in las.well else -999.25
+        df.replace([val_nulo, -999.25], np.nan, inplace=True)
         df.dropna(how='all', inplace=True)
         
-        # Recuperar lógica de unidades para display (opcional, nice feature)
-        unidad_profundidad = las.well['STRT'].unit if 'STRT' in las.well else ""
-        if not unidad_profundidad and len(las.curves) > 0:
-            unidad_profundidad = las.curves[0].unit
-            
-        print(f"Unidad detectada: {unidad_profundidad}")
+        df, _ = normalizar_unidades_profundidad(las, df)
         
         return df
 
     except Exception as e:
-        print(f"Error leyendo el archivo: {e}")
+        print(f"Error leyendo {os.path.basename(las_file)}: {e}")
         return None
 
 def calcular_vsh(df):
-    print("\n--- CÁLCULO DE VSH INTELIGENTE ---")
-    
-    # 1. Usamos obtener_curva
-    # Note: df is already clean from inspeccionar_las
     gr = obtener_curva(df, 'GR')
-    
-    # Manejo de errores si no hay GR (todo NaN)
-    if gr.isna().all():
-        print("Error: No se encontró ninguna curva de Gamma Ray válida.")
-        return df # Retornamos DF original sin VSH, o con VSH vacía? Mejor sin.
+    if gr.isna().all(): return df 
 
-    # 2. Limpieza y Estadística (sobre la serie ya extraída)
-    # gr es una Series, podemos usar sus métodos.
-    # Clip outliers for standard Vcal? Or just Linear?
-    # Keeping implementation simple as per snippet suggestion but robust
+    gr_clean = gr.dropna()
+    if gr_clean.empty: return df
+
+    gr_min = np.percentile(gr_clean, 5)
+    gr_max = np.percentile(gr_clean, 95)
     
-    gr_min, gr_max = gr.min(), gr.max()
-    
-    # Avoid div by zero
-    if gr_max == gr_min:
+    if gr_max - gr_min < 10:
          vsh = pd.Series(0, index=df.index)
     else:
          vsh = (gr - gr_min) / (gr_max - gr_min)
     
-    df['VSH'] = np.clip(vsh, 0, 1) # Guardamos en el DF
+    df['VSH'] = np.clip(vsh, 0, 1) 
     return df
 
 def normalizar_porosidad(df, rho_matrix=2.65, rho_fluid=1.0):
-    print("\n--- NORMALIZANDO CURVAS DE POROSIDAD ---")
-    """
-    Calcula porosidad densidad usando la matriz variable.
-    Args:
-        rho_matrix (float): Densidad de matriz (2.65 Sand, 2.71 Lime, 2.87 Dol)
-        rho_fluid (float): Densidad del fluido (1.0 Agua, 0.85 Aceite, etc.)
-    """
-    print(f"\n--- NORMALIZANDO CURVAS (Matriz: {rho_matrix} g/cc) ---")   
-    # Usamos obtener_curva para extraer las series (ya limpias de nulos del sistema)
-    # y manejamos NANs locales.
     den = obtener_curva(df, 'RHOB') 
+    if den.isna().all(): den = obtener_curva(df, 'DPHI')
     neu = obtener_curva(df, 'NPHI') 
 
-    # --- CORRECCIÓN DE DENSIDAD (RHOB -> DPHI) ---
     if not den.isna().all():
-        # Lógica para distinguir si es RHOB (g/cc) o ya es Porosidad
-        # Filtramos valores "físicos" para el check
-        datos_validos = den[den > 0]
-        
-        if datos_validos.empty:
-             promedio = 0
-        else:
-             promedio = datos_validos.mean()
-
-        # Si el promedio es > 1.5, es Densidad (g/cc) --> Convertir
-        if promedio > 1.5:
-            print(f"Detectado RHOB. Usando Matrix={rho_matrix}, Fluid={rho_fluid}")
-            # Guardamos como DPHI_FINAL (usando variables, no constantes)
+        valid = den[den > 0]
+        if not valid.empty and valid.mean() > 1.5: 
             df['DPHI_FINAL'] = ((rho_matrix - den) / (rho_matrix - rho_fluid)) * 100
-        
-        # Si no, verificamos si es Porosidad Decimal (v/v) --> Multiplicar por 100
-        elif datos_validos.max() <= 1.0: 
-            print(f"Detectado DPHI decimal. Pasando a %.")
+        elif not valid.empty and valid.max() <= 1.0: 
             df['DPHI_FINAL'] = den * 100
-        
-        # Si no, ya está en porcentaje
-        else:
-            print(f"Detectado DPHI Porcentaje.")
+        else: 
             df['DPHI_FINAL'] = den
-    else:
-        print("No se encontró curva de Densidad/Porosidad válida.")
 
-    # --- CORRECCIÓN DE NEUTRÓN (NPHI) ---
     if not neu.isna().all():
-        # Misma lógica: filtrar nulos negativos/extremos
-        datos_validos_neu = neu[(neu > -10) & (neu.notna())]
-        
-        if not datos_validos_neu.empty and datos_validos_neu.max() <= 1.0:
-            print(f"Detectado NPHI decimal. Pasando a %.")
+        valid_neu = neu[(neu > -10) & (neu.notna())]
+        if not valid_neu.empty and valid_neu.max() <= 1.0:
             df['NPHI_FINAL'] = neu * 100
         else:
             df['NPHI_FINAL'] = neu
+            
+    for col in ['DPHI_FINAL', 'NPHI_FINAL']:
+        if col in df.columns: df[col] = df[col].clip(-5, 60)
+            
+    return df
+
+def calcular_sw(df, a=1, m=2, n=2, rw=0.05):
+    rt = obtener_curva(df, 'RDEP')
     
-    if 'DPHI_FINAL' in df.columns:
-        df['DPHI_FINAL'] = df['DPHI_FINAL'].clip(lower=-5, upper=60)
-    if 'NPHI_FINAL' in df.columns:
-        df['NPHI_FINAL'] = df['NPHI_FINAL'].clip(lower=-5, upper=60)
+    if 'DPHI_FINAL' in df.columns and 'NPHI_FINAL' in df.columns:
+        phi_pct = (df['DPHI_FINAL'] + df['NPHI_FINAL']) / 2
+    elif 'DPHI_FINAL' in df.columns:
+        phi_pct = df['DPHI_FINAL']
+    elif 'NPHI_FINAL' in df.columns:
+        phi_pct = df['NPHI_FINAL']
+    else:
+        return df
+
+    phi = phi_pct / 100
+    mask_valid = (phi > 0.001) & (rt > 0.1)
     
-    # Clip entre -5% y 60%. 
-    # ¿Por qué -5 y no 0? Para que si hay Anhidrita (matriz pesada), 
-    # veas la curva irse un poco a la izquierda (aviso visual) en vez de 
-    # aplanarse en cero artificialmente.
-    # El neutrón a veces lee -2% o -3% en gas muy seco o matrices apretadas.
+    sw = pd.Series(1.0, index=df.index)
+    
+    try:
+        term = (a * rw) / (np.power(phi[mask_valid], m) * rt[mask_valid])
+        sw_calc = np.power(term, (1/n))
+        sw.loc[mask_valid] = np.clip(sw_calc, 0, 1)
+    except:
+        pass
+
+    df['SW'] = sw
+    return df
+
+def aplicar_filtro_calidad(df, bit_size=8.5, tolerancia=2.5):
+    """
+    Control de Calidad (QC) Integral:
+    1. Detecta Washouts (Caliper).
+    2. Elimina lecturas de Densidad imposibles (Lodo/Agua).
+    3. Recorta Porosidades irreales.
+    """
+    # --- 1. FILTRO MECÁNICO (CALIPER / WASHOUT) ---
+    cal = obtener_curva(df, 'CALI')
+    
+    if cal.isna().all():
+        df['BAD_HOLE'] = False
+        print("   ⚠️  No se encontró Caliper. Saltando filtro mecánico.")
+    else:
+        # Lógica: Si Caliper > Bit Size + Tolerancia
+        mask_bad_hole = cal > (bit_size + tolerancia)
+        df['BAD_HOLE'] = mask_bad_hole
+        
+        pct_bad = (mask_bad_hole.sum() / len(df)) * 100
+        if pct_bad > 0:
+            print(f"   -> QC Mecánico: {pct_bad:.1f}% marcado como Derrumbe (Washout)")
+            
+            # Limpiamos curvas sensibles al contacto con la pared
+            cols_sensibles = ['RHOB', 'DPHI_FINAL', 'PEF', 'DRHO']
+            for col in cols_sensibles:
+                if col in df.columns:
+                    df.loc[mask_bad_hole, col] = np.nan
+
+    # --- 2. FILTRO FÍSICO (DENSIDAD MÍNIMA) ---
+    if 'RHOB' in df.columns:
+        limite_fisico = 1.75
+        mask_rho_erronea = df['RHOB'] < limite_fisico
+        
+        pct_err = (mask_rho_erronea.sum() / len(df)) * 100
+        if pct_err > 0:
+            print(f"   -> QC Físico: {pct_err:.1f}% eliminado por Densidad irreal (< {limite_fisico} g/cc)")
+            
+            # Anulamos la densidad y cualquier cálculo derivado
+            df.loc[mask_rho_erronea, 'RHOB'] = np.nan
+            if 'DPHI_FINAL' in df.columns: 
+                df.loc[mask_rho_erronea, 'DPHI_FINAL'] = np.nan
+
+    # --- 3. FILTRO LÓGICO (TECHO DE POROSIDAD) ---
+    # Nadie tiene 56% de porosidad a 3000 metros de profundidad.
+    techo_phi = 45.0 # Porcentaje
+    
+    for col in ['DPHI_FINAL', 'NPHI_FINAL']:
+        if col in df.columns:
+            # Clip upper limita los valores máximos sin borrarlos (los baja al techo)
+            # Opcional: Podrías usar NaN si prefieres ser más estricto
+            df[col] = df[col].clip(upper=techo_phi)
+
+    # Re-limpiamos saturación si las porosidades cambiaron a NaN
+    if 'SW' in df.columns and 'DPHI_FINAL' in df.columns:
+        # Si la porosidad se volvió NaN por los filtros, la Sw debe morir también
+        df.loc[df['DPHI_FINAL'].isna(), 'SW'] = np.nan
             
     return df

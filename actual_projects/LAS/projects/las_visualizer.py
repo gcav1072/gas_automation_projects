@@ -1,180 +1,123 @@
 import matplotlib.pyplot as plt
 import os
 import numpy as np
-# IMPORTANTE: Traemos 'obtener_curva' del backend y quitamos 'buscar_curva'
-from las_inspect import inspeccionar_las, calcular_vsh, obtener_curva, normalizar_porosidad
+from las_inspect import obtener_curva, inspeccionar_las, calcular_vsh, normalizar_porosidad, calcular_sw, aplicar_filtro_calidad
 
-def graficar_triple_combo(df, nombre_pozo="Pozo Desconocido"):
-    # Configuración del lienzo (3 Tracks)
-    fig, ax = plt.subplots(nrows=1, ncols=3, figsize=(10, 8), sharey=True)
+def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_salida=None):
+    fig, ax = plt.subplots(nrows=1, ncols=4, figsize=(14, 8), sharey=True)
 
-    # --- ASIGNACIÓN DE VARIABLES ---
-    # Extraemos Series limpias para usar directamente en el plot
     depth = df.index
     gr    = obtener_curva(df, 'GR')
     res_d = obtener_curva(df, 'RDEP')
-    res_m = obtener_curva(df, 'RMED')
-    # Nota: Porosidad y VSH ya vienen calculadas/normalizadas en el DF si se corrieron los pasos previos.
-    # Pero para consistencia visual en Tracks 1 y 2 usamos las variables 'gr', 'res_...'.
+    cal   = obtener_curva(df, 'CALI') # Traemos Caliper para dibujar
     
     # -------------------------------------------------------------------------
-    # TRACK 1: LITOLOGÍA (Gamma Ray y Vsh)
+    # TRACK 1: LITOLOGÍA + CALIPER
     # -------------------------------------------------------------------------
-    
     if not gr.isna().all():
-        ax[0].plot(gr, depth, color='green', linewidth=0.5)
-        ax[0].set_xlabel("Gamma Ray [gAPI]", color='green', fontsize=10)
+        ax[0].plot(gr, depth, color='green', linewidth=0.5, label='GR')
         ax[0].set_xlim(0, 150)
-
-        gr_cutoff = 75 
-        ax[0].plot(gr, depth, color='green', linewidth=0.5)
-
-        # Relleno condicional:
-        # 1. Relleno Amarillo (Arenas) cuando GR < Cutoff
-        ax[0].fill_betweenx(depth, gr, gr_cutoff, where=(gr < gr_cutoff), 
-                    interpolate=True, color='gold', alpha=0.4)
-
-        # 2. Relleno Verde (Arcillas) cuando GR > Cutoff
-        ax[0].fill_betweenx(depth, gr, gr_cutoff, where=(gr >= gr_cutoff), 
-                    interpolate=True, color='darkgreen', alpha=0.4)
-
-        ax[0].set_axisbelow(True) # Grid al fondo
-    else:
-        ax[0].text(0.5, 0.5, "SIN DATOS GR", ha='center', transform=ax[0].transAxes, color='red')
-
-    if 'VSH' in df.columns:
-        ax0_vsh = ax[0].twiny() 
-        ax0_vsh.plot(df['VSH'], depth, color='black', linewidth=0.5)
-        ax0_vsh.set_xlim(0, 1)
-        ax0_vsh.fill_betweenx(depth, df['VSH'], 0, color='gray', alpha=0.5)
-        ax0_vsh.spines['top'].set_position(('outward', 15))
-        ax0_vsh.set_xlabel("Vsh (v/v)")
+        ax[0].fill_betweenx(depth, gr, 75, where=(gr < 75), color='gold', alpha=0.4)
+        ax[0].fill_betweenx(depth, gr, 75, where=(gr >= 75), color='darkgreen', alpha=0.4)
     
-    ax[0].grid(True, which='major', linestyle='-', alpha=0.3)
-    ax[0].set_title("Track 1: Litología")
+    # Graficar Caliper (Eje superior)
+    if not cal.isna().all():
+        ax0_cal = ax[0].twiny()
+        ax0_cal.plot(cal, depth, color='black', linestyle='--', linewidth=0.8, label='CALI')
+        ax0_cal.set_xlim(6, 26) # Escala típica de caliper (6 a 26 pulgadas)
+        ax0_cal.set_xlabel("Caliper (in)", color='black', fontsize=8)
+        ax0_cal.spines['top'].set_position(('outward', 10))
+
+    ax[0].set_xlabel("Gamma Ray [gAPI]", color='green', fontsize=9)
+    ax[0].set_ylabel("Profundidad (m)", fontsize=10, fontweight='bold')
+    ax[0].grid(True, which='major', alpha=0.3)
 
     # -------------------------------------------------------------------------
     # TRACK 2: RESISTIVIDAD
     # -------------------------------------------------------------------------
-    hay_res = False
-
     if not res_d.isna().all():
-        # Filtramos valores <= 0 para evitar errores logarítmicos
-        # Como res_d es una Serie, podemos filtrar directamente para el plot sin perder alineación de índice si usamos el índice de la serie filtrada
-        rd_valid = res_d[res_d > 0]
-        if not rd_valid.empty:
-            ax[1].semilogx(rd_valid, rd_valid.index, 
-                           color='red', linewidth=0.8, label='Res. Deep')
-            hay_res = True
-        
-    if not res_m.isna().all():
-        rm_valid = res_m[res_m > 0]
-        if not rm_valid.empty:
-            ax[1].semilogx(rm_valid, rm_valid.index, 
-                           color='blue', linewidth=0.6, linestyle='--', label='Res. Med')
-            hay_res = True
-
-    if hay_res:
-        ax[1].set_xscale('log')
-        ax[1].set_xlim(0.2, 10000)
-        ax[1].legend(loc='lower center', bbox_to_anchor=(0.5, 1.05), fontsize='small') 
-    else:
-        ax[1].text(0.5, 0.5, "SIN RESISTIVIDAD", ha='center', transform=ax[1].transAxes, color='red')
-        
-    ax[1].set_xlabel("Resistividad (ohm.m)")
-    ax[1].grid(True, which='both', linestyle='-', alpha=0.3)
-    ax[1].set_title("Track 2: Fluidos")
+        valid = res_d[res_d > 0]
+        if not valid.empty:
+            ax[1].semilogx(valid, valid.index, color='red', linewidth=1, label='RDeep')
+            
+    ax[1].set_xlim(0.2, 2000)
+    ax[1].set_xlabel("Resistividad (ohm.m)", fontsize=9)
+    ax[1].grid(True, which='both', alpha=0.3)
 
     # -------------------------------------------------------------------------
     # TRACK 3: POROSIDAD
     # -------------------------------------------------------------------------
-    hay_porosidad = False
-    
-    # 1. Neutrón Final (Ya normalizado a %)
-    if 'NPHI_FINAL' in df.columns:
-        ax[2].plot(df['NPHI_FINAL'], depth, color='blue', linestyle='--', linewidth=0.8, label='Neutrón')
-        hay_porosidad = True
-    
-    # 2. Densidad Final (Ya convertida a Porosidad %)
-    if 'DPHI_FINAL' in df.columns:
-        ax[2].plot(df['DPHI_FINAL'], depth, color='red', linewidth=0.8, label='Densidad')
-        hay_porosidad = True
-    
-    # 3. Sombreado (Crossover)
-    if 'NPHI_FINAL' in df.columns and 'DPHI_FINAL' in df.columns:
-        try:
-            ax[2].fill_betweenx(depth, df['NPHI_FINAL'], df['DPHI_FINAL'], 
-                                where=(df['DPHI_FINAL'] > df['NPHI_FINAL']), 
-                                color='yellow', alpha=0.5, label='Gas/Crossover')
-        except:
-            pass 
-
-    # IMPORTANTE: Escala fija de Porosidad (45% a -15%)
     ax[2].set_xlim(45, -15) 
-    ax[2].set_xlabel("Porosidad (%)")
+    if 'NPHI_FINAL' in df.columns:
+        ax[2].plot(df['NPHI_FINAL'], depth, color='blue', linestyle='--', linewidth=0.8)
+    if 'DPHI_FINAL' in df.columns:
+        ax[2].plot(df['DPHI_FINAL'], depth, color='red', linewidth=0.8)
+    if 'NPHI_FINAL' in df.columns and 'DPHI_FINAL' in df.columns:
+        ax[2].fill_betweenx(depth, df['NPHI_FINAL'], df['DPHI_FINAL'], 
+                            where=(df['DPHI_FINAL'] > df['NPHI_FINAL']), color='yellow', alpha=0.6)
     
-    if hay_porosidad:
-        ax[2].legend(loc='lower center', bbox_to_anchor=(0.5, 1.05), fontsize='small')
-    else:
-        ax[2].text(0.5, 0.5, "SIN DATOS POROSIDAD", ha='center', transform=ax[2].transAxes, color='red')
+    ax[2].set_xlabel("Porosidad (%)", fontsize=9)
+    ax[2].grid(True, alpha=0.3)
 
-    ax[2].grid(True, which='both', linestyle='-', alpha=0.3)
-    ax[2].set_title("Track 3: Porosidad")
+    # -------------------------------------------------------------------------
+    # TRACK 4: SATURACIÓN
+    # -------------------------------------------------------------------------
+    ax[3].set_xlim(1.0, 0.0)
+    if 'SW' in df.columns:
+        # Filtramos nulos para que no se rompa el plot
+        sw_valid = df['SW'].dropna()
+        ax[3].plot(sw_valid, sw_valid.index, color='black', linewidth=1.0)
+        ax[3].fill_betweenx(sw_valid.index, sw_valid, 1.0, color='green', alpha=0.3)
+        ax[3].axvline(x=0.5, color='gray', linestyle=':', linewidth=0.8)
+
+    ax[3].set_xlabel("Sw (v/v)", fontsize=9, color='blue')
+    ax[3].grid(True, alpha=0.3)
+
+    # -------------------------------------------------------------------------
+    # BAD HOLE FLAG (Sombreado Gris)
+    # -------------------------------------------------------------------------
+    if 'BAD_HOLE' in df.columns:
+        # Usamos fill_betweenx para pintar franjas grises donde BAD_HOLE es True
+        # Lo aplicamos en todos los ejes para que sea evidente
+        for axis in ax:
+            axis.fill_betweenx(depth, 0, 1, where=df['BAD_HOLE'], 
+                               transform=axis.get_xaxis_transform(), 
+                               color='gray', alpha=0.5, zorder=0)
 
     # Ajustes finales
     ax[0].invert_yaxis()
-    plt.subplots_adjust(top=0.85, bottom=0.1, left=0.08, right=0.96, wspace=0.25)
-    plt.suptitle(f"Triple Combo: {nombre_pozo}", fontsize=12)
-    plt.show()
+    plt.suptitle(f"Evaluación QC: {nombre_pozo}", fontsize=14, y=0.98)
+    plt.subplots_adjust(top=0.88, bottom=0.08, left=0.06, right=0.98, wspace=0.15)
+    
+    if guardar and ruta_salida:
+        plt.savefig(ruta_salida, dpi=100)
+        plt.close(fig)
+    else:
+        plt.show()
 
-# --- BLOQUE MAIN ---
+# --- BLOQUE MAIN INTERACTIVO ---
 if __name__ == "__main__":
-    # Setup de rutas
     script_dir = os.path.dirname(os.path.abspath(__file__))
     las_folder = os.path.join(script_dir, '..', 'LAS_data')
     
-    archivo_nombre = input("Nombre del archivo (ej: 7_1-1.las): ")
+    print("\n--- VISUALIZADOR QC (Con Filtro de Derrumbe) ---")
+    archivo_nombre = input("Nombre del archivo (ej: 25_4-5.las): ").strip()
     ruta_completa = os.path.join(las_folder, archivo_nombre)
     
-    # --- NUEVO: SELECTOR DE LITOLOGÍA ---
-    print("\nSeleccione la Matriz de referencia:")
-    print("1. Arenisca (Sandstone) [2.65 g/cc] - (Enter por defecto)")
-    print("2. Caliza (Limestone)   [2.71 g/cc]")
-    print("3. Dolomía (Dolomite)   [2.87 g/cc]")
-    print("4. Personalizado")
-    
-    opcion = input("Opción > ").strip()
-    
-    # Lógica de selección robusta
-    if opcion == '2':
-        rho_ma = 2.71
-        litologia = "Caliza"
-    elif opcion == '3':
-        rho_ma = 2.87
-        litologia = "Dolomía"
-    elif opcion == '4':
+    if os.path.exists(ruta_completa):
+        # 1. Parámetros
         try:
-            rho_ma = float(input("Introduce densidad de matriz (g/cc): "))
-            litologia = f"Personalizada ({rho_ma})"
-        except ValueError:
-            print("Valor inválido. Se usará Arenisca (2.65).")
-            rho_ma = 2.65
-            litologia = "Arenisca"
-    else:
-        # Por defecto (Opción 1 o vacío)
-        rho_ma = 2.65
-        litologia = "Arenisca"
-
-    print(f"\nProcesando '{archivo_nombre}' como litología: {litologia}...")
-    
-    df_pozo = inspeccionar_las(ruta_completa)
-    
-    if df_pozo is not None:
-        # 1. Calcular Vsh
-        df_calculado = calcular_vsh(df_pozo)
+            bs_in = input("Bit Size (pulgadas) [Enter=8.5]: ").strip()
+            bs = float(bs_in) if bs_in else 8.5
+        except: bs = 8.5
+            
+        # 2. Proceso
+        df = inspeccionar_las(ruta_completa)
+        df = calcular_vsh(df)
+        df = aplicar_filtro_calidad(df, bit_size=bs) # <--- AQUÍ FILTRAMOS
+        df = normalizar_porosidad(df)
+        df = calcular_sw(df)
         
-        # 2. Normalizar Porosidades (Arregla las líneas verticales)
-        df_calculado = normalizar_porosidad(df_calculado, rho_matrix=rho_ma)
-
         # 3. Graficar
-        graficar_triple_combo(df_calculado, nombre_pozo=archivo_nombre)
+        print("Generando gráfico...")
+        graficar_quad_combo(df, nombre_pozo=archivo_nombre, guardar=False)

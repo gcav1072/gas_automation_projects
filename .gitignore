@@ -13,3 +13,6 @@ __pycache__/
 
 # Configuraciones de VS Code (opcional)
 .vscode/
+
+# Archivos de resultados
+Resultados_Fase4_PayZone/
