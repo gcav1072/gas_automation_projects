@@ -54,7 +54,13 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
         ax[2].plot(df['DPHI_FINAL'], depth, color='red', linewidth=0.8)
     if 'NPHI_FINAL' in df.columns and 'DPHI_FINAL' in df.columns:
         ax[2].fill_betweenx(depth, df['NPHI_FINAL'], df['DPHI_FINAL'], 
-                            where=(df['DPHI_FINAL'] > df['NPHI_FINAL']), color='yellow', alpha=0.6)
+                            where=(df['DPHI_FINAL'] > df['NPHI_FINAL']), color='yellow', alpha=0.6, label='Gas/Limpio')
+                            
+        # --- NUEVO: Sombreado Shale Effect: NPHI > DPHI (Gris) ---
+        # Esto nos permite ver visualmente las zonas que el filtro va a matar
+        ax[2].fill_betweenx(depth, df['NPHI_FINAL'], df['DPHI_FINAL'], 
+                            where=(df['NPHI_FINAL'] > df['DPHI_FINAL']), 
+                            color='gray', alpha=0.3, label='Shale Effect')
     
     ax[2].set_xlabel("Porosidad (%)", fontsize=9)
     ax[2].grid(True, alpha=0.3)

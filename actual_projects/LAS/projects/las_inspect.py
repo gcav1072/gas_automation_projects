@@ -102,6 +102,15 @@ def normalizar_porosidad(df, rho_matrix=2.65, rho_fluid=1.0):
             
     for col in ['DPHI_FINAL', 'NPHI_FINAL']:
         if col in df.columns: df[col] = df[col].clip(-5, 60)
+
+    # --- NUEVO: CÁLCULO DE SEPARACIÓN D-N (SHALE INDICATOR) ---
+    # Calculamos cuánto se separa el Neutrón de la Densidad.
+    # En arenas limpias/petróleo: DPHI >= NPHI (Separación negativa o cero).
+    # En arcillas (Shale): NPHI >>> DPHI (Separación positiva grande).
+    if 'DPHI_FINAL' in df.columns and 'NPHI_FINAL' in df.columns:
+        df['DN_SEP'] = df['NPHI_FINAL'] - df['DPHI_FINAL']
+    else:
+        df['DN_SEP'] = 0.0
             
     return df
 

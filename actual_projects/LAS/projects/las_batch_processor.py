@@ -21,7 +21,8 @@ def setup_folders():
             os.makedirs(folder)
 
 def procesar_lote(matriz_rho=2.65, cutoff_vsh=0.5, cutoff_phi=8.0, 
-                rw=0.05, a=1, m=2, n=2, cutoff_sw=0.5):
+                rw=0.05, a=1, m=2, n=2, cutoff_sw=0.5,
+                cutoff_dn_sep=15.0): # <--- NUEVO PARÁMETRO (15% por defecto)
     
     setup_folders()
     
@@ -84,15 +85,24 @@ def procesar_lote(matriz_rho=2.65, cutoff_vsh=0.5, cutoff_phi=8.0,
             if {'VSH', 'DPHI_FINAL', 'SW'}.issubset(df.columns):
                 # Máscara Lógica de PAY (Cumple TODO)
                 if 'NPHI_FINAL' in df.columns:
-                    phi_total = (df['DPHI_FINAL'] + df['NPHI_FINAL']) / 2
+                    phi_para_corte = (df['DPHI_FINAL'] + df['NPHI_FINAL']) / 2
                 else:
-                    phi_total = df['DPHI_FINAL']
+                    phi_para_corte = df['DPHI_FINAL']
 
-                # Máscara Lógica de PAY (Cumple TODO)
+                # --- NUEVO: MÁSCARA DE EFECTO ARCILLA (DN SEPARATION) ---
+                # Si NPHI es 15% mayor que DPHI, es arcilla, no Pay.
+                # (Ej. Pozo 31_2-19 S: N=29%, D=5% -> Sep=24% -> ELIMINADO)
+                if 'DN_SEP' in df.columns:
+                    mask_bad_litho = df['DN_SEP'] > cutoff_dn_sep
+                else:
+                    mask_bad_litho = False
+
+                # --- MÁSCARA LÓGICA DE PAY (ACTUALIZADA) ---
                 mask_pay = (
                     (df['VSH'] < cutoff_vsh) & 
-                    (phi_total >= cutoff_phi) &  # <--- CORREGIDO (Promedio)
-                    (df['SW'] < cutoff_sw)
+                    (phi_para_corte >= cutoff_phi) & 
+                    (df['SW'] < cutoff_sw) &
+                    (~mask_bad_litho) # <--- APLICAMOS EL FILTRO AQUÍ
                 )
                 
                 # Espesor Neto
@@ -101,7 +111,9 @@ def procesar_lote(matriz_rho=2.65, cutoff_vsh=0.5, cutoff_phi=8.0,
                 
                 # --- CORRECCIÓN CRÍTICA: Promedios solo donde mask_pay es True ---
                 if count_pay > 0:
-                    phi_pay_mean = df.loc[mask_pay, 'DPHI_FINAL'].mean()
+                    # CORRECCIÓN: Usar 'phi_para_corte' (Promedio) en lugar de 'DPHI_FINAL'
+                    phi_pay_mean = phi_para_corte[mask_pay].mean() 
+                    
                     sw_pay_mean  = df.loc[mask_pay, 'SW'].mean()
                     vsh_pay_mean = df.loc[mask_pay, 'VSH'].mean()
             
