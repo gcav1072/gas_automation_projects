@@ -126,7 +126,7 @@ def visualizar_validacion_pay(archivo_las,
     plt.tight_layout()
     plt.show()
 
-if __name__ == "__main__":
+if __name__ == "__main__":  
     # RUTA HARDCODED PARA PRUEBA RÁPIDA O INPUT
     # ruta_defecto = 'actual_projects/LAS/LAS_data/KGS_1.las' 
     
@@ -138,8 +138,9 @@ if __name__ == "__main__":
     if not os.path.exists(ruta_base):
         ruta_base = archivo # Asume carpeta actual
         
-    visualizar_validacion_pay(ruta_base, 
-                              cut_phi=8.0,  # 8% Porosidad
-                              cut_sw=0.5,   # 50% Sw
-                              cut_vsh=0.4,  # 40% Vshale
-                              rw=0.045)     # Rw específico
+visualizar_validacion_pay(ruta_base, 
+                              cut_phi=7.5,   # Porosidad > 8%
+                              cut_sw=0.4,    # Agua < 50%
+                              cut_vsh=0.5,  # <--- CRÍTICO: Bajamos de 0.5 a 0.35 (Más estricto con arcilla)
+                              cut_dn_sep=15.0, # Filtro de efecto arcilla (Neutron-Density)
+                              rw=0.045)

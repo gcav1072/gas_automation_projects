@@ -10,33 +10,24 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
     depth = df.index
     gr    = obtener_curva(df, 'GR')
     res_d = obtener_curva(df, 'RDEP')
-    cal   = obtener_curva(df, 'CALI') # Traemos Caliper para dibujar
+    cal   = obtener_curva(df, 'CALI')
     
     # -------------------------------------------------------------------------
-    # TRACK 1: LITOLOGÍA + CALIPER
+    # TRACK 1: LITOLOGÍA (GR + CALIPER)
     # -------------------------------------------------------------------------
     if not gr.isna().all():
         ax[0].plot(gr, depth, color='green', linewidth=0.5, label='GR')
         ax[0].set_xlim(0, 150)
-        ax[0].fill_betweenx(depth, gr, 75, where=(gr < 75), color='gold', alpha=0.4)
-        ax[0].fill_betweenx(depth, gr, 75, where=(gr >= 75), color='darkgreen', alpha=0.4)
-    
-    # Graficar Caliper (Eje superior)
+        # Sombreado litológico simple
+        ax[0].fill_betweenx(depth, gr, 150, where=(gr < 60), color='gold', alpha=0.2, label='Sand Potential')
+        ax[0].fill_betweenx(depth, gr, 0, where=(gr > 100), color='black', alpha=0.1)
+
     if not cal.isna().all():
         ax0_cal = ax[0].twiny()
         ax0_cal.plot(cal, depth, color='black', linestyle='--', linewidth=0.8, label='CALI')
-        ax0_cal.set_xlim(6, 26) # Escala típica de caliper (6 a 26 pulgadas)
-        ax0_cal.set_xlabel("Caliper (in)", color='black', fontsize=8)
+        ax0_cal.set_xlim(6, 26)
         ax0_cal.spines['top'].set_position(('outward', 10))
-
-    # --- LEGEND TRACK 1 (Combined) ---
-    lines_1, labels_1 = ax[0].get_legend_handles_labels()
-    if 'ax0_cal' in locals():
-        lines_2, labels_2 = ax0_cal.get_legend_handles_labels()
-        lines_1 += lines_2
-        labels_1 += labels_2
-    ax[0].legend(lines_1, labels_1, loc='upper center', bbox_to_anchor=(0.5, 1.15), 
-                 fontsize='x-small', ncol=2, frameon=False)
+        ax0_cal.set_xlabel("Caliper (in)", color='black', fontsize=7)
 
     ax[0].set_xlabel("Gamma Ray [gAPI]", color='green', fontsize=9)
     ax[0].set_ylabel("Profundidad (m)", fontsize=10, fontweight='bold')
@@ -52,78 +43,105 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
             
     ax[1].set_xlim(0.2, 2000)
     ax[1].set_xlabel("Resistividad (ohm.m)", fontsize=9)
-
     ax[1].grid(True, which='both', alpha=0.3)
-    ax[1].legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), fontsize='x-small', frameon=False)
 
     # -------------------------------------------------------------------------
     # TRACK 3: POROSIDAD
     # -------------------------------------------------------------------------
     ax[2].set_xlim(45, -15) 
     if 'NPHI_FINAL' in df.columns:
-
         ax[2].plot(df['NPHI_FINAL'], depth, color='blue', linestyle='--', linewidth=0.8, label='NPHI')
     if 'DPHI_FINAL' in df.columns:
         ax[2].plot(df['DPHI_FINAL'], depth, color='red', linewidth=0.8, label='DPHI')
+        
+    # Sombreado de Crossover (Gas/Limpio)
     if 'NPHI_FINAL' in df.columns and 'DPHI_FINAL' in df.columns:
         ax[2].fill_betweenx(depth, df['NPHI_FINAL'], df['DPHI_FINAL'], 
-                            where=(df['DPHI_FINAL'] > df['NPHI_FINAL']), color='yellow', alpha=0.6, label='Gas/Limpio')
-                            
-        # --- NUEVO: Sombreado Shale Effect: NPHI > DPHI (Gris) ---
-        # Esto nos permite ver visualmente las zonas que el filtro va a matar
-        ax[2].fill_betweenx(depth, df['NPHI_FINAL'], df['DPHI_FINAL'], 
-                            where=(df['NPHI_FINAL'] > df['DPHI_FINAL']), 
-                            color='gray', alpha=0.3, label='Shale Effect')
+                            where=(df['DPHI_FINAL'] > df['NPHI_FINAL']), 
+                            color='yellow', alpha=0.6, label='X-Over')
     
     ax[2].set_xlabel("Porosidad (%)", fontsize=9)
-
     ax[2].grid(True, alpha=0.3)
-    ax[2].legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), fontsize='x-small', ncol=2, frameon=False)
+    ax[2].legend(loc='upper right', fontsize='x-small')
 
     # -------------------------------------------------------------------------
-    # TRACK 4: SATURACIÓN
+    # TRACK 4: PAY ZONE (Corregido: Solo pinta si cumple criterios)
     # -------------------------------------------------------------------------
     ax[3].set_xlim(1.0, 0.0)
+    
     if 'SW' in df.columns:
-        # Filtramos nulos para que no se rompa el plot
-
         sw_valid = df['SW'].dropna()
         ax[3].plot(sw_valid, sw_valid.index, color='black', linewidth=1.0, label='Sw')
-        ax[3].fill_betweenx(sw_valid.index, sw_valid, 1.0, color='green', alpha=0.3, label='Pay')
-        ax[3].axvline(x=0.5, color='gray', linestyle=':', linewidth=0.8)
+        
+        # --- LÓGICA DE RECONSTRUCCIÓN VISUAL DE PAY ---
+        # Recalculamos la máscara aquí para pintarla (o usamos una pasada si existiera)
+        # Esto asegura que lo que ves en verde ES lo que sumó metros.
+        
+        is_pay = pd.Series(False, index=df.index)
+        
+        # Intentamos replicar criterios estándar o usar columnas pre-calculadas si existieran
+        # Para visualización genérica, usamos criterios medios, PERO si pasaste stats,
+        # intentamos ser consistentes.
+        
+        # Recuperamos curvas críticas
+        vsh = df['VSH'] if 'VSH' in df.columns else pd.Series(0, index=df.index)
+        
+        # Definimos cutoffs visuales (Deben coincidir con tu batch processor)
+        v_cut_vsh = 0.4    # Un poco más estricto visualmente
+        v_cut_sw = 0.5
+        v_cut_phi = 8.0
+        
+        # Phi promedio
+        if 'NPHI_FINAL' in df.columns and 'DPHI_FINAL' in df.columns:
+            phi_avg = (df['DPHI_FINAL'] + df['NPHI_FINAL']) / 2
+        elif 'DPHI_FINAL' in df.columns:
+            phi_avg = df['DPHI_FINAL']
+        else:
+            phi_avg = pd.Series(0, index=df.index)
+
+        # Máscara
+        mask_pay_visual = (vsh < v_cut_vsh) & (phi_avg >= v_cut_phi) & (df['SW'] < v_cut_sw)
+        
+        # PINTAR PAY: Rellenamos de verde SOLO donde es Pay real
+        # Usamos 'where' para filtrar el llenado
+        ax[3].fill_betweenx(depth, df['SW'], 1.0, 
+                           where=mask_pay_visual, 
+                           color='lime', alpha=0.5, label='NET PAY')
+        
+        # Pintar Agua (Azul) para contraste
+        ax[3].fill_betweenx(depth, df['SW'], 0.0, 
+                           where=(df['SW'] > v_cut_sw), 
+                           color='blue', alpha=0.1)
 
     ax[3].set_xlabel("Sw (v/v)", fontsize=9, color='blue')
-
     ax[3].grid(True, alpha=0.3)
-    ax[3].legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), fontsize='x-small', frameon=False)
+    ax[3].legend(loc='upper right', fontsize='x-small')
 
     # -------------------------------------------------------------------------
-    # BAD HOLE FLAG (Sombreado Gris)
+    # BAD HOLE FLAG
     # -------------------------------------------------------------------------
     if 'BAD_HOLE' in df.columns:
-        # Usamos fill_betweenx para pintar franjas grises donde BAD_HOLE es True
-        # Lo aplicamos en todos los ejes para que sea evidente
         for axis in ax:
             axis.fill_betweenx(depth, 0, 1, where=df['BAD_HOLE'], 
                                 transform=axis.get_xaxis_transform(), 
-                                color='gray', alpha=0.5, zorder=0)
+                                color='gray', alpha=0.5, zorder=10)
 
     # Ajustes finales
     ax[0].invert_yaxis()
     plt.suptitle(f"Evaluación QC: {nombre_pozo}", fontsize=14, y=0.98)
     
-    # Mostrar Estadísticas de Pay si existen
+    # Mostrar Estadísticas
     if pay_stats:
         stats_text = (
             f"Net Pay: {pay_stats.get('Net_Pay_m', 0)} m\n"
             f"Phi Avg: {pay_stats.get('Phi_Pay_Avg_%', 0)} %\n"
             f"Sw Avg: {pay_stats.get('Sw_Pay_Avg_Frac', 1.0)} v/v"
         )
-        # Colocamos un cuadro de texto en la esquina superior derecha del gráfico general
-        plt.figtext(0.99, 0.98, stats_text, fontsize=9, ha='right', va='top', 
-                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        plt.figtext(0.02, 0.95, stats_text, fontsize=9, ha='left', va='top', 
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
 
-    plt.subplots_adjust(top=0.85, bottom=0.08, left=0.06, right=0.98, wspace=0.15)
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.88)
     
     if guardar and ruta_salida:
         plt.savefig(ruta_salida, dpi=100)

@@ -69,11 +69,7 @@ def procesar_lote(matriz_rho=2.65, cutoff_vsh=0.5, cutoff_phi=8.0,
             else:
                 step_val = 0
 
-            # 4. Generar Gráfico
-            ruta_imagen = os.path.join(IMG_FOLDER, f"{nombre_pozo}_Eval.png")
-            graficar_quad_combo(df, nombre_pozo=nombre_pozo, guardar=True, ruta_salida=ruta_imagen)
-            
-            # 5. Estadísticas Avanzadas (PAY ZONE)
+            # 4. Estadísticas Avanzadas (PAY ZONE) -> Se mueve ANTES de graficar
             top_depth = df.index.min()
             bottom_depth = df.index.max()
             
@@ -116,6 +112,18 @@ def procesar_lote(matriz_rho=2.65, cutoff_vsh=0.5, cutoff_phi=8.0,
                     
                     sw_pay_mean  = df.loc[mask_pay, 'SW'].mean()
                     vsh_pay_mean = df.loc[mask_pay, 'VSH'].mean()
+
+            # Preparar diccionario de stats para pasar al visualizador
+            stats_dict = {
+                'Net_Pay_m': round(net_pay_thk, 2),
+                'Phi_Pay_Avg_%': round(phi_pay_mean, 2) if not np.isnan(phi_pay_mean) else 0,
+                'Sw_Pay_Avg_Frac': round(sw_pay_mean, 3) if not np.isnan(sw_pay_mean) else 1.0,
+                'Vsh_Pay_Avg_Frac': round(vsh_pay_mean, 3) if not np.isnan(vsh_pay_mean) else None
+            }
+
+            # 5. Generar Gráfico (Ahora con stats)
+            ruta_imagen = os.path.join(IMG_FOLDER, f"{nombre_pozo}_Eval.png")
+            graficar_quad_combo(df, nombre_pozo=nombre_pozo, guardar=True, ruta_salida=ruta_imagen, pay_stats=stats_dict)
             
             # Guardar datos
             resumen_pozos.append({
