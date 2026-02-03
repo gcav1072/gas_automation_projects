@@ -4,17 +4,19 @@ import numpy as np
 import os
 
 # --- CONFIGURACIÓN DE ALIAS ---
+# Se agregó DRHO para control de calidad avanzado
 ALIAS_CFG = {
-    'GR':   ['GR', 'GAPI', 'GAM', 'GR_EDTC', 'CGR', 'NGAP', 'SGR'],
-    'RDEP': ['RDEP', 'RT', 'ILD', 'LLD', 'AT90', 'RES_DEEP', 'HDRS', 'RES_DEP'],
-    'RMED': ['RMED', 'ILM', 'LLS', 'AT30', 'AT20', 'RES_MED', 'IMPH'],
+    'GR':   ['GR', 'GAPI', 'GAM', 'GR_EDTC', 'CGR', 'NGAP', 'SGR', 'GRR'],
+    'RDEP': ['RDEP', 'RT', 'ILD', 'LLD', 'AT90', 'RES_DEEP', 'HDRS', 'RES_DEP', 'HRLD'],
+    'RMED': ['RMED', 'ILM', 'LLS', 'AT30', 'AT20', 'RES_MED', 'IMPH', 'HRLS'],
     'NPHI': ['NPHI', 'TNPH', 'NPOR', 'CNPOR', 'CNC', 'NPSS', 'NPLS', 'CNL'],
     'RHOB': ['RHOB', 'RHOZ', 'DEN', 'ZDEN', 'BDEN', 'RHOM'], 
     'DPHI': ['DPLS', 'DPHI', 'DPHZ', 'DPOR'], 
     'DT':   ['DT', 'DTCO', 'DTC', 'DT4P', 'AC'],
-    # NUEVOS ALIAS PARA CALIDAD
-    'CALI': ['CALI', 'CAL', 'CALS', 'HCAL', 'DCAL', 'CLDC'],
-    'BS':   ['BS', 'BIT', 'BIT_SIZE', 'BSZ']
+    # --- CURVAS DE CALIDAD ---
+    'CALI': ['CALI', 'CAL', 'CALS', 'HCAL', 'DCAL', 'CLDC', 'C1'],
+    'BS':   ['BS', 'BIT', 'BIT_SIZE', 'BSZ'],
+    'DRHO': ['DRHO', 'DCAL', 'CORR', 'ZCOR', 'HDRA', 'RHOC'] # Corrección de Densidad
 }
 
 def obtener_curva(df, mnemonico_objetivo):
@@ -38,7 +40,7 @@ def normalizar_unidades_profundidad(las, df):
     es_pies = any(x in unidad for x in ['F', 'FT', 'FEET'])
     
     if es_pies:
-        # 1 ft = 0.3048 m
+        # 1 ft = 0,3048 m
         df.index = df.index * 0.3048
         return df, True
     else:
@@ -54,7 +56,6 @@ def inspeccionar_las(las_file):
         df.dropna(how='all', inplace=True)
         
         df, _ = normalizar_unidades_profundidad(las, df)
-        
         return df
 
     except Exception as e:
@@ -68,15 +69,89 @@ def calcular_vsh(df):
     gr_clean = gr.dropna()
     if gr_clean.empty: return df
 
+    # Usamos percentiles para evitar picos ruidosos (spikes)
     gr_min = np.percentile(gr_clean, 5)
     gr_max = np.percentile(gr_clean, 95)
     
-    if gr_max - gr_min < 10:
-         vsh = pd.Series(0, index=df.index)
+    # CRITERIO DE ROBUSTEZ:
+    # Si la diferencia entre max y min es ridícula (ej. < 20 API), 
+    # la normalización es matemática basura.
+    if gr_max - gr_min < 20:
+         # Asumir que es Arcilla (No Pay) por seguridad si el log es plano/muerto
+         vsh = pd.Series(1.0, index=df.index) 
     else:
          vsh = (gr - gr_min) / (gr_max - gr_min)
     
     df['VSH'] = np.clip(vsh, 0, 1) 
+    return df
+
+def aplicar_filtro_calidad(df, bit_size=8.5, tol_cal=2.5, tol_drho=0.15):
+    """
+    QC Robusto - Estrategia 'Hard Kill' (Muerte Súbita)
+    1. Filtro Mecánico (Caliper > BS + Tol).
+    2. Filtro de Contacto (DRHO > 0,15).
+    3. Filtro Físico (Densidades imposibles < 1,95).
+    4. Techo estricto de Porosidad (32% - Hard Kill).
+    """
+    
+    mask_bad_data = pd.Series(False, index=df.index)
+    
+    # --- 1. FILTRO MECÁNICO (CALIPER) ---
+    cal = obtener_curva(df, 'CALI')
+    has_cal = not cal.isna().all()
+    
+    if has_cal:
+        # Detectar Washouts
+        mask_cal_bad = cal > (bit_size + tol_cal)
+        mask_bad_data = mask_bad_data | mask_cal_bad
+    
+    # --- 2. FILTRO DE CONTACTO (DRHO) ---
+    drho = obtener_curva(df, 'DRHO')
+    if not drho.isna().all():
+        # DRHO > 0,15 o < -0,15 g/cc es inaceptable
+        mask_drho_bad = drho.abs() > tol_drho
+        mask_bad_data = mask_bad_data | mask_drho_bad
+
+    # --- APLICACIÓN DE MÁSCARA DE MALA CALIDAD ---
+    cols_afectadas = ['RHOB', 'DPHI_FINAL', 'NPHI_FINAL', 'PEF']
+    for col in cols_afectadas:
+        if col in df.columns:
+            df.loc[mask_bad_data, col] = np.nan
+            
+    df['BAD_HOLE'] = mask_bad_data 
+
+    # --- 3. FILTRO FÍSICO (DENSIDAD MÍNIMA) ---
+    if 'RHOB' in df.columns:
+        limite_fisico = 1.95 # Densidad mínima creíble para roca
+        mask_rho_lodo = df['RHOB'] < limite_fisico
+        
+        if mask_rho_lodo.any():
+            df.loc[mask_rho_lodo, 'RHOB'] = np.nan
+            if 'DPHI_FINAL' in df.columns:
+                df.loc[mask_rho_lodo, 'DPHI_FINAL'] = np.nan
+
+    # --- 4. TECHO DE POROSIDAD (EL "MATAGIGANTES") ---
+    # Aquí cambiamos .clip() por asignación de NaN.
+    # Si es > 35% (o 32% si no hay QC), se ELIMINA.
+    
+    techo_tolerante = 35.0
+    techo_estricto = 30.0 # Muy estricto si no tenemos Caliper/DRHO
+    
+    techo_aplicar = techo_tolerante if (has_cal or not drho.isna().all()) else techo_estricto
+    
+    for col in ['DPHI_FINAL', 'NPHI_FINAL']:
+        if col in df.columns:
+            # HARD KILL: Si supera el techo, es NaN. No se recorta a 35, se BORRA.
+            mask_irreal = df[col] > techo_aplicar
+            df.loc[mask_irreal, col] = np.nan 
+
+    # Re-limpieza de Sw derivada
+    if 'SW' in df.columns:
+        mask_no_phi = False
+        if 'DPHI_FINAL' in df.columns: mask_no_phi |= df['DPHI_FINAL'].isna()
+        if 'NPHI_FINAL' in df.columns: mask_no_phi |= df['NPHI_FINAL'].isna()
+        df.loc[mask_no_phi, 'SW'] = np.nan
+            
     return df
 
 def normalizar_porosidad(df, rho_matrix=2.65, rho_fluid=1.0):
@@ -86,11 +161,15 @@ def normalizar_porosidad(df, rho_matrix=2.65, rho_fluid=1.0):
 
     if not den.isna().all():
         valid = den[den > 0]
+        # Detectar si la curva viene en g/cc o en %
         if not valid.empty and valid.mean() > 1.5: 
+            # Está en g/cc, calculamos porosidad
             df['DPHI_FINAL'] = ((rho_matrix - den) / (rho_matrix - rho_fluid)) * 100
         elif not valid.empty and valid.max() <= 1.0: 
+            # Está en V/V
             df['DPHI_FINAL'] = den * 100
         else: 
+            # Está en porcentaje
             df['DPHI_FINAL'] = den
 
     if not neu.isna().all():
@@ -99,14 +178,11 @@ def normalizar_porosidad(df, rho_matrix=2.65, rho_fluid=1.0):
             df['NPHI_FINAL'] = neu * 100
         else:
             df['NPHI_FINAL'] = neu
+    
+    # Nota: Los límites de -5 a 60 aquí son solo para evitar errores matemáticos,
+    # el filtro de calidad real ocurre en 'aplicar_filtro_calidad'
             
-    for col in ['DPHI_FINAL', 'NPHI_FINAL']:
-        if col in df.columns: df[col] = df[col].clip(-5, 60)
-
-    # --- NUEVO: CÁLCULO DE SEPARACIÓN D-N (SHALE INDICATOR) ---
-    # Calculamos cuánto se separa el Neutrón de la Densidad.
-    # En arenas limpias/petróleo: DPHI >= NPHI (Separación negativa o cero).
-    # En arcillas (Shale): NPHI >>> DPHI (Separación positiva grande).
+    # --- CÁLCULO DE SEPARACIÓN D-N (SHALE INDICATOR) ---
     if 'DPHI_FINAL' in df.columns and 'NPHI_FINAL' in df.columns:
         df['DN_SEP'] = df['NPHI_FINAL'] - df['DPHI_FINAL']
     else:
@@ -132,6 +208,7 @@ def calcular_sw(df, a=1, m=2, n=2, rw=0.05):
     sw = pd.Series(1.0, index=df.index)
     
     try:
+        # Ecuación de Archie Standard
         term = (a * rw) / (np.power(phi[mask_valid], m) * rt[mask_valid])
         sw_calc = np.power(term, (1/n))
         sw.loc[mask_valid] = np.clip(sw_calc, 0, 1)
@@ -139,63 +216,4 @@ def calcular_sw(df, a=1, m=2, n=2, rw=0.05):
         pass
 
     df['SW'] = sw
-    return df
-
-def aplicar_filtro_calidad(df, bit_size=8.5, tolerancia=2.5):
-    """
-    Control de Calidad (QC) Integral:
-    1. Detecta Washouts (Caliper).
-    2. Elimina lecturas de Densidad imposibles (Lodo/Agua).
-    3. Recorta Porosidades irreales.
-    """
-    # --- 1. FILTRO MECÁNICO (CALIPER / WASHOUT) ---
-    cal = obtener_curva(df, 'CALI')
-    
-    if cal.isna().all():
-        df['BAD_HOLE'] = False
-        print("   ⚠️  No se encontró Caliper. Saltando filtro mecánico.")
-    else:
-        # Lógica: Si Caliper > Bit Size + Tolerancia
-        mask_bad_hole = cal > (bit_size + tolerancia)
-        df['BAD_HOLE'] = mask_bad_hole
-        
-        pct_bad = (mask_bad_hole.sum() / len(df)) * 100
-        if pct_bad > 0:
-            print(f"   -> QC Mecánico: {pct_bad:.1f}% marcado como Derrumbe (Washout)")
-            
-            # Limpiamos curvas sensibles al contacto con la pared
-            cols_sensibles = ['RHOB', 'DPHI_FINAL', 'PEF', 'DRHO']
-            for col in cols_sensibles:
-                if col in df.columns:
-                    df.loc[mask_bad_hole, col] = np.nan
-
-    # --- 2. FILTRO FÍSICO (DENSIDAD MÍNIMA) ---
-    if 'RHOB' in df.columns:
-        limite_fisico = 1.75
-        mask_rho_erronea = df['RHOB'] < limite_fisico
-        
-        pct_err = (mask_rho_erronea.sum() / len(df)) * 100
-        if pct_err > 0:
-            print(f"   -> QC Físico: {pct_err:.1f}% eliminado por Densidad irreal (< {limite_fisico} g/cc)")
-            
-            # Anulamos la densidad y cualquier cálculo derivado
-            df.loc[mask_rho_erronea, 'RHOB'] = np.nan
-            if 'DPHI_FINAL' in df.columns: 
-                df.loc[mask_rho_erronea, 'DPHI_FINAL'] = np.nan
-
-    # --- 3. FILTRO LÓGICO (TECHO DE POROSIDAD) ---
-    # Nadie tiene 56% de porosidad a 3000 metros de profundidad.
-    techo_phi = 45.0 # Porcentaje
-    
-    for col in ['DPHI_FINAL', 'NPHI_FINAL']:
-        if col in df.columns:
-            # Clip upper limita los valores máximos sin borrarlos (los baja al techo)
-            # Opcional: Podrías usar NaN si prefieres ser más estricto
-            df[col] = df[col].clip(upper=techo_phi)
-
-    # Re-limpiamos saturación si las porosidades cambiaron a NaN
-    if 'SW' in df.columns and 'DPHI_FINAL' in df.columns:
-        # Si la porosidad se volvió NaN por los filtros, la Sw debe morir también
-        df.loc[df['DPHI_FINAL'].isna(), 'SW'] = np.nan
-            
     return df

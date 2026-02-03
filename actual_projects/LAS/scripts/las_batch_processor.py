@@ -5,7 +5,7 @@ import glob
 import time
 
 # Usamos los nombres estándar de tus archivos
-from las_inspect import inspeccionar_las, calcular_vsh, normalizar_porosidad, calcular_sw
+from las_inspect import inspeccionar_las, calcular_vsh, normalizar_porosidad, calcular_sw, obtener_curva, aplicar_filtro_calidad
 from las_visualizer import graficar_quad_combo
 
 # --- CONFIGURACIÓN DE RUTAS ---
@@ -20,17 +20,21 @@ def setup_folders():
         if not os.path.exists(folder):
             os.makedirs(folder)
 
-def procesar_lote(matriz_rho=2.65, cutoff_vsh=0.5, cutoff_phi=8.0, 
+def procesar_lote(matriz_rho=None, cutoff_vsh=0.5, cutoff_phi=8.0, 
                 rw=0.05, a=1, m=2, n=2, cutoff_sw=0.5,
                 cutoff_dn_sep=15.0): # <--- NUEVO PARÁMETRO (15% por defecto)
     
     setup_folders()
+    
+    # Mensaje sobre modo de densidad
+    rho_mode_str = f"Fijo ({matriz_rho} g/cc)" if matriz_rho else "AUTO (Basado en PEF)"
     
     patron = os.path.join(INPUT_FOLDER, "*.las")
     archivos = glob.glob(patron)
     
     print(f"\n--- INICIANDO PROCESAMIENTO (CÁLCULO EN PAY ZONE) ---")
     print(f"Archivos: {len(archivos)}")
+    print(f"Rho Matriz: {rho_mode_str}")
     print(f"Criterios Pay: Vsh<{cutoff_vsh} | Phi>{cutoff_phi}% | Sw<{cutoff_sw}")
     
     resumen_pozos = []
@@ -52,13 +56,37 @@ def procesar_lote(matriz_rho=2.65, cutoff_vsh=0.5, cutoff_phi=8.0,
             # 2. Cálculos Petrofísicos
             df = calcular_vsh(df)
 
-            # --- NUEVO: FILTRO DE CALIDAD ---
-            # Asumimos Bit Size 8.5" estándar, o podrías pedirlo como parámetro global
-            from las_inspect import aplicar_filtro_calidad # Recuerda importarlo arriba
+
+
             df = aplicar_filtro_calidad(df, bit_size=8.5) 
             # --------------------------------
 
-            df = normalizar_porosidad(df, rho_matrix=matriz_rho)
+            # --- LÓGICA RHO MATRIX INTELIGENTE ---
+            rho_final = 2.65 # Fallback seguro
+            
+            if matriz_rho is not None:
+                rho_final = float(matriz_rho)
+            else:
+                # AUTO MODE: Detectar por PEF
+                try:
+                    pef_curve = obtener_curva(df, 'PEF')
+                    if not pef_curve.isna().all():
+                        pef_mean = pef_curve.mean()
+                        if pef_mean < 2.5:
+                            rho_final = 2.65
+                            print(f"   -> Auto Rho: 2.65 (Sandstone, PEF={pef_mean:.2f})")
+                        elif pef_mean > 4.0:
+                            rho_final = 2.71
+                            print(f"   -> Auto Rho: 2.71 (Limestone, PEF={pef_mean:.2f})")
+                        else:
+                            rho_final = 2.85
+                            print(f"   -> Auto Rho: 2.85 (Dolomite/Mix, PEF={pef_mean:.2f})")
+                    else:
+                        print("   -> Auto Rho: 2.65 (Default, sin PEF)")
+                except:
+                    print("   -> Auto Rho: 2.65 (Error detección)")
+
+            df = normalizar_porosidad(df, rho_matrix=rho_final)
             df = calcular_sw(df, a=a, m=m, n=n, rw=rw)
             
             # 3. Detectar STEP (Metros)
@@ -169,7 +197,8 @@ if __name__ == "__main__":
     
     # Defaults rápidos
     try:
-        rho_ma = float(input("1. Densidad Matriz (Enter=2.65): ").strip() or 2.65)
+        rho_in = input("1. Densidad Matriz [Enter=AUTO/PEF o Valor]: ").strip()
+        rho_ma = float(rho_in) if rho_in else None # None activa el modo Auto
         rw_val = float(input("2. Rw (Enter=0.05): ").strip() or 0.05)
         # Cutoffs
         cut_phi = float(input("3. Cutoff Porosidad % (Enter=8.0): ").strip() or 8.0)

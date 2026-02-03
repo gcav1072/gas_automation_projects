@@ -159,7 +159,33 @@ if __name__ == "__main__":
     ruta_completa = os.path.join(las_folder, archivo_nombre)
     
     if os.path.exists(ruta_completa):
-        # 1. Parámetros
+        # 2. Carga y Pre-Proceso (Lo movemos ANTES de pedir parámetros para leer PEF)
+        df = inspeccionar_las(ruta_completa)
+        
+        # --- Lógica Smart Rho (Auto-detect) ---
+        default_rho = 2.65
+        pef_mean = np.nan
+        pef_msg = "(Default: Sandstone)"
+        
+        # Intentamos obtener PEF para sugerir matriz
+        try:
+            # Buscamos curva PEF con obtener_curva (que busca alias)
+            pef_curve = obtener_curva(df, 'PEF')
+            if not pef_curve.isna().all():
+                pef_mean = pef_curve.mean()
+                if pef_mean < 2.5:
+                    default_rho = 2.65
+                    pef_msg = f"(PEF={pef_mean:.2f} -> Sandstone)"
+                elif pef_mean > 4.0:
+                    default_rho = 2.71
+                    pef_msg = f"(PEF={pef_mean:.2f} -> Limestone)"
+                else:
+                    default_rho = 2.85
+                    pef_msg = f"(PEF={pef_mean:.2f} -> Dolomite/Mix)"
+        except:
+            pass # Si falla algo en la detección, mantenemos 2.65
+
+        # 1. Parámetros (Interactivo)
         try:
             bs_in = input("Bit Size (pulgadas) [Enter=8.5]: ").strip()
             bs = float(bs_in) if bs_in else 8.5
@@ -169,14 +195,17 @@ if __name__ == "__main__":
             
             m_in = input("m (Exponente Cementación) [Enter=2.0]: ").strip()
             m_val = float(m_in) if m_in else 2.0
-        except: 
-            bs, rw_val, m_val = 8.5, 0.05, 2.0
             
-        # 2. Proceso
-        df = inspeccionar_las(ruta_completa)
+            # Input de Rho con Smart Default
+            rho_in = input(f"Rho Matrix (g/cc) [Enter={default_rho} {pef_msg}]: ").strip()
+            rho_val = float(rho_in) if rho_in else default_rho
+        except: 
+            bs, rw_val, m_val, rho_val = 8.5, 0.05, 2.0, default_rho
+            
+        # 2. Continuar Proceso Pipeline
         df = calcular_vsh(df)
         df = aplicar_filtro_calidad(df, bit_size=bs) # <--- AQUÍ FILTRAMOS
-        df = normalizar_porosidad(df)
+        df = normalizar_porosidad(df, rho_matrix=rho_val)
         df = calcular_sw(df, rw=rw_val, m=m_val)
         
         # 3. Calcular Net Pay y Estadísticas (Lógica copiada de las_batch_processor.py)
