@@ -29,6 +29,15 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
         ax0_cal.set_xlabel("Caliper (in)", color='black', fontsize=8)
         ax0_cal.spines['top'].set_position(('outward', 10))
 
+    # --- LEGEND TRACK 1 (Combined) ---
+    lines_1, labels_1 = ax[0].get_legend_handles_labels()
+    if 'ax0_cal' in locals():
+        lines_2, labels_2 = ax0_cal.get_legend_handles_labels()
+        lines_1 += lines_2
+        labels_1 += labels_2
+    ax[0].legend(lines_1, labels_1, loc='upper center', bbox_to_anchor=(0.5, 1.15), 
+                 fontsize='x-small', ncol=2, frameon=False)
+
     ax[0].set_xlabel("Gamma Ray [gAPI]", color='green', fontsize=9)
     ax[0].set_ylabel("Profundidad (m)", fontsize=10, fontweight='bold')
     ax[0].grid(True, which='major', alpha=0.3)
@@ -43,16 +52,19 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
             
     ax[1].set_xlim(0.2, 2000)
     ax[1].set_xlabel("Resistividad (ohm.m)", fontsize=9)
+
     ax[1].grid(True, which='both', alpha=0.3)
+    ax[1].legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), fontsize='x-small', frameon=False)
 
     # -------------------------------------------------------------------------
     # TRACK 3: POROSIDAD
     # -------------------------------------------------------------------------
     ax[2].set_xlim(45, -15) 
     if 'NPHI_FINAL' in df.columns:
-        ax[2].plot(df['NPHI_FINAL'], depth, color='blue', linestyle='--', linewidth=0.8)
+
+        ax[2].plot(df['NPHI_FINAL'], depth, color='blue', linestyle='--', linewidth=0.8, label='NPHI')
     if 'DPHI_FINAL' in df.columns:
-        ax[2].plot(df['DPHI_FINAL'], depth, color='red', linewidth=0.8)
+        ax[2].plot(df['DPHI_FINAL'], depth, color='red', linewidth=0.8, label='DPHI')
     if 'NPHI_FINAL' in df.columns and 'DPHI_FINAL' in df.columns:
         ax[2].fill_betweenx(depth, df['NPHI_FINAL'], df['DPHI_FINAL'], 
                             where=(df['DPHI_FINAL'] > df['NPHI_FINAL']), color='yellow', alpha=0.6, label='Gas/Limpio')
@@ -64,7 +76,9 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
                             color='gray', alpha=0.3, label='Shale Effect')
     
     ax[2].set_xlabel("Porosidad (%)", fontsize=9)
+
     ax[2].grid(True, alpha=0.3)
+    ax[2].legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), fontsize='x-small', ncol=2, frameon=False)
 
     # -------------------------------------------------------------------------
     # TRACK 4: SATURACIÓN
@@ -72,13 +86,16 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
     ax[3].set_xlim(1.0, 0.0)
     if 'SW' in df.columns:
         # Filtramos nulos para que no se rompa el plot
+
         sw_valid = df['SW'].dropna()
-        ax[3].plot(sw_valid, sw_valid.index, color='black', linewidth=1.0)
-        ax[3].fill_betweenx(sw_valid.index, sw_valid, 1.0, color='green', alpha=0.3)
+        ax[3].plot(sw_valid, sw_valid.index, color='black', linewidth=1.0, label='Sw')
+        ax[3].fill_betweenx(sw_valid.index, sw_valid, 1.0, color='green', alpha=0.3, label='Pay')
         ax[3].axvline(x=0.5, color='gray', linestyle=':', linewidth=0.8)
 
     ax[3].set_xlabel("Sw (v/v)", fontsize=9, color='blue')
+
     ax[3].grid(True, alpha=0.3)
+    ax[3].legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), fontsize='x-small', frameon=False)
 
     # -------------------------------------------------------------------------
     # BAD HOLE FLAG (Sombreado Gris)
@@ -88,8 +105,8 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
         # Lo aplicamos en todos los ejes para que sea evidente
         for axis in ax:
             axis.fill_betweenx(depth, 0, 1, where=df['BAD_HOLE'], 
-                               transform=axis.get_xaxis_transform(), 
-                               color='gray', alpha=0.5, zorder=0)
+                                transform=axis.get_xaxis_transform(), 
+                                color='gray', alpha=0.5, zorder=0)
 
     # Ajustes finales
     ax[0].invert_yaxis()
@@ -106,7 +123,7 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
         plt.figtext(0.99, 0.98, stats_text, fontsize=9, ha='right', va='top', 
                     bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
-    plt.subplots_adjust(top=0.88, bottom=0.08, left=0.06, right=0.98, wspace=0.15)
+    plt.subplots_adjust(top=0.85, bottom=0.08, left=0.06, right=0.98, wspace=0.15)
     
     if guardar and ruta_salida:
         plt.savefig(ruta_salida, dpi=100)
