@@ -1,170 +1,137 @@
 # Sistema de Evaluación Petrofísica Automatizada (PetroBatch)
 
-Versión: 1.0 (Release Fase 5)
+- **Versión:** 1.1 (Fase 5 - Final Release)  
+- **Autor:** Ing. Gabriel Astudillo  
+- **Fecha:** Febrero 2026  
+- **Motor:** Python 3.10+ (`lasio`, `pandas`, `numpy`, `matplotlib`)
 
-Autor: Ing. Gabriel Astudillo
-
-Fecha: Febrero 2026
-
-Lenguaje: Python 3.10+
-
-Librerías: lasio, pandas, numpy, matplotlib
+---
 
 ## 1. Resumen Ejecutivo
 
-PetroBatch es una suite de software desarrollada en Python diseñada para la evaluación petrofísica masiva ("Batch Processing") de archivos de registros de pozo (formato LAS).
+PetroBatch es una suite de software de alto rendimiento diseñada para la evaluación petrofísica masiva (*Batch Processing*) de registros de pozos en formato LAS.  
+Esta herramienta trasciende las calculadoras básicas de registros, implementando un flujo de trabajo de Ingeniería de Yacimientos industrialmente robusto. Su objetivo principal es convertir datos crudos en valor económico, jerarquizando activos mediante el cálculo de HCPV (*Hydrocarbon Pore Volume*).
 
-A diferencia de calculadoras simples, este sistema implementa un flujo de trabajo de Ingeniería de Yacimientos robusto, incorporando:
+### Capacidades Clave (Fase 5)
 
-Normalización automática de unidades (SI).
+- **Física Avanzada:** Implementación de Simandoux Modificado para corrección de arcillosidad ($V_{sh}$) en el cálculo de saturación ($S_w$).
+- **Matriz Inteligente:** Detección automática de litología (Arenisca/Caliza/Dolomía) basada en curvas PEF ($P_{ef}$) punto a punto.
+- **Integridad de Datos:** *Pipeline* de ejecución estricto donde el Control de Calidad (QC) elimina datos espurios (derrumbes/*washouts*) antes de la estimación de reservas.
+- **Ranking Económico:** Clasificación automática de pozos basada en HCPV (Metros de poro-hidrocarburo), no solo en espesor bruto.
 
-Control de Calidad (QC) multi-variable (Mecánico, Físico y Litológico).
-
-Cálculo de reservas (Net Pay) basado en cortes petrofísicos estándar.
-
-Generación de reportes auditables y visualización avanzada (Quad-Combo).
+---
 
 ## 2. Arquitectura del Sistema
 
-El proyecto es modular y consta de tres componentes principales y una herramienta de validación:
+El sistema es modular y desacoplado para facilitar el mantenimiento:
 
-### las_inspect.py (El Núcleo / Backend)
+### A. `las_inspect.py` (El Motor Físico)
 
-Contiene la lógica física y matemática.
+Contiene la "verdad matemática" del proyecto.
 
-Gestión de Alias: Diccionario inteligente para reconocer mnemónicos (GR, GAPI, CGR -> GR).
+- **Gestión de Alias:** Reconoce mnemónicos variables (ej. `GR`, `GAPI`, `NGAP` → `GR`).
+- **Normalización:** Convierte unidades imperiales (pies) a Sistema Internacional (metros) automáticamente.
+- **Simandoux Modificado:**
+  $$
+  \frac{1}{R_t} = \frac{\phi^m}{a \cdot R_w (1-V_{sh})} + \frac{V_{sh} \cdot S_w}{R_{sh}}
+  $$
+- **QC "Hard Kill":** Elimina drásticamente datos donde:
+  - Caliper > Bit Size + Tolerancia.
+  - Densidad < 1.95 g/cc (Lodo).
+  - Porosidad > 35% (Físicamente imposible en este contexto).
 
-Normalización SI: Detecta si el pozo está en pies (FT) y convierte índices y espesores a Metros (m).
+### B. `las_batch_processor.py` (El Orquestador)
 
-Algoritmos: Cálculo de $V_{sh}$, Porosidad ($\phi_D$, $\phi_N$, $\phi_T$), Saturación de Agua ($S_w$).
+Gestiona el flujo masivo:
 
-Filtros de Calidad (QC): Lógica para anular datos en zonas de derrumbe o lecturas erróneas.
+- Itera sobre carpetas de datos.
+- Determina parámetros dinámicos (Matriz Auto vs Fija).
+- Ejecuta el *Pipeline Seguro*: $V_{sh} \rightarrow \phi \rightarrow \text{Filtro QC} \rightarrow S_w$.
+- Exporta tablas de resultados (`.csv`) rankeadas por HCPV.
 
-### las_visualizer.py (El Visualizador / Frontend)
+### C. `las_visualizer.py` (El Analista Gráfico)
 
-Genera gráficos de calidad de publicación.
+- Genera visualizaciones *Quad-Combo* (Litología, Resistividad, Porosidad, *Pay Zone*).
+- Garantiza consistencia visual: Aplica los mismos *cutoffs* usados en el cálculo numérico.
+- Muestra estadísticas de HCPV y *Pay* en el gráfico.
 
-Quad-Combo Plot: 4 Pistas (Litología+Caliper, Resistividad, Porosidad+Efecto Gas/Lutita, Fluidos).
+---
 
-QC Flags: Sombreado gris en zonas donde la data fue invalidada por mala calidad.
+## 3. Parámetros de Evaluación (Inputs)
 
-Interpretación Visual: Rellenos de color para litología (Gamma Ray), Gas (Crossover D-N) y Pay (Saturación).
+El sistema solicita parámetros clave al inicio, permitiendo sensibilidades rápidas:
 
-### las_batch_processor.py (El Orquestador)
+| Parámetro       | Default               | Descripción                                                                 |
+|-----------------|-----------------------|-----------------------------------------------------------------------------|
+| Densidad Matriz | `AUTO`                | Si es `None`, usa PEF (<2.5: Arena, >4.0: Caliza). Si falla PEF, asume 2.65. |
+| Rw              | 0.05 $\Omega \cdot m$ | Resistividad del agua de formación (a temperatura de yacimiento).           |
+| R_Shale         | 2.0 $\Omega \cdot m$  | Resistividad de la arcilla (para Simandoux).                                |
+| Cutoff Vsh      | 0.50 (50%)            | Límite máximo de volumen de arcilla.                                        |
+| Cutoff Phi      | 8.0 %                 | Porosidad mínima efectiva.                                                  |
+| Cutoff Sw       | 0.50 (50%)            | Saturación de agua máxima.                                                  |
 
-Procesa carpetas enteras de archivos LAS.
+---
 
-Itera sobre todos los archivos .las.
+## 4. Definición de Reservas (Resultados)
 
-Aplica la lógica de negocio (Cutoffs).
+El sistema calcula dos métricas fundamentales para cada pozo:
 
-Calcula el Net Pay (Espesor Neto Productivo).
+1. **Net Pay (Espesor Neto Productivo)**  
+   Suma de intervalos (paso de profundidad) que cumplen simultáneamente:
+   - $V_{sh} < \text{Cutoff}$
+   - $\phi_{final} \ge \text{Cutoff}$ (Datos limpios post-QC)
+   - $S_w < \text{Cutoff}$
+   - Sin indicio de derrumbe (QC Flag = OK)
 
-Exporta estadísticas finales a CSV (Ranking de Pozos).
+2. **HCPV (*Hydrocarbon Pore Volume*)**  
+   Es la métrica de "dinero". Representa el espesor equivalente si se comprimiera todo el hidrocarburo en una capa 100% porosa y saturada:
+   $$
+   HCPV = \sum_{\text{Pay}} (\text{Step} \times \phi \times (1 - S_w))
+   $$
+   Este es el criterio utilizado para ordenar el ranking final.
 
-### las_pickett.py (Validación)
+---
 
-Herramienta gráfica interactiva (Pickett Plot) para calibrar parámetros de Archie ($R_w, m$) y asegurar la coherencia física.
+## 5. Guía de Uso Rápida
 
-## 3. Metodología de Cálculo
+### Requisitos
 
-### 3.1. Pre-procesamiento
-
-Limpieza de Nulos: Se eliminan valores -999.25 y similares.
-
-Conversión de Profundidad: Si STRT.unit es 'F' o 'FT', se multiplica la profundidad por 0.3048.
-
-### 3.2. Propiedades Petrofísicas
-
-Volumen de Arcilla ($V_{sh}$): Modelo Lineal usando percentiles estadísticos del pozo (P05 para arena limpia, P95 para arcilla) para evitar outliers.
-
-
-$$V_{sh} = \frac{GR - GR_{min}}{GR_{max} - GR_{min}}$$
-
-Porosidad Densidad ($\phi_D$):
-
-
-$$\phi_D = \frac{\rho_{ma} - \rho_b}{\rho_{ma} - \rho_{fl}}$$
-
-
-Parámetros: $\rho_{ma}=2.65$ (Arenisca), $\rho_{fl}=1.0$ (Agua).
-
-Porosidad Total ($\phi_T$): Promedio aritmético para compensar efectos de gas y arcilla.
-
-
-$$\phi_T = \frac{\phi_D + \phi_N}{2}$$
-
-Saturación de Agua ($S_w$): Ecuación de Archie.
-
-
-$$S_w = \sqrt[n]{ \frac{a \cdot R_w}{\phi_T^m \cdot R_t} }$$
-
-
-Parámetros Típicos: $a=1, m=2, n=2, R_w=0.05$.
-
-## 4. Sistema de Control de Calidad (QC Shield) 🛡️
-
-El sistema aplica tres filtros estrictos antes de calcular reservas. Si un dato falla en cualquiera de estos filtros, se marca como NaN y **no suma reservas**.
-
-| Tipo de Filtro | Criterio | Acción | Razón Física |
-| :---- | :---- | :---- | :---- |
-| **Mecánico** | $CALI > BitSize + 2.5"$ | Anular $\phi, S_w$ | Derrumbe (Washout). El patín de densidad lee lodo, creando porosidad falsa. |
-| **Físico** | $\rho_b < 1.75 g/cc$ | Anular $\phi, S_w$ | Lectura de lodo o error de herramienta. Evita porosidades \> 100%. |
-| **Litológico** | $\phi_N - \phi_D > 15\%$ | Anular Pay | Efecto de Arcilla (Shale Effect). Separa lutitas húmedas de reservorios reales. |
-
-
-## 5. Definición de "Net Pay" (Reservas)
-
-Para que un intervalo de profundidad cuente como Espesor Neto Productivo (Net Pay), debe cumplir simultáneamente:
-
-Condición de Roca: $V_{sh} < 50\%$ (Es Arena).
-
-Condición de Almacén: $\phi_T \ge 8\%$ (Tiene espacio poroso conectado).
-
-Condición de Fluido: $S_w < 50\%$ (Tiene Hidrocarburo móvil).
-
-Condición de Calidad: QC_Flag == PASS (El dato es confiable).
-
-$$NetPay = \sum (\text{Step} \times \text{PayFlag})$$
-
-## 6. Guía de Uso
-
-### Requisitos Previos
-
-Tener Python instalado y las librerías necesarias:
-
+```bash
 pip install lasio pandas numpy matplotlib
-
+```
 
 ### Ejecución
 
-Colocar archivos .las en la carpeta LAS_data.
+1. Colocar archivos `.las` en la carpeta `LAS_data`.
+2. Correr el script maestro:
+   ```bash
+   python las_batch_processor.py
+   ```
+3. Seguir las instrucciones en consola. Para una corrida estándar, presionar `Enter` en todos los *prompts* para usar los *defaults* recomendados.
 
-Ejecutar el procesador:
+### Salidas
 
-python las_batch_processor.py
+- **CSV de Reservas:**  
+  `Resultados_Fase4_PayZone/Tablas/Resumen_Reservas_PayZone.csv`
+- **Gráficos:**  
+  `Resultados_Fase4_PayZone/Plots/*.png`
 
+---
 
-Ingresar parámetros cuando se soliciten (o usar defaults con Enter).
+## 6. Historial de Cambios (Change Log)
 
-Matriz (2.65), Rw (0.05), Cutoffs.
+### Fase 5 (Actual)
 
-### Resultados
+- **[FÍSICA]** Migración de Archie a Simandoux Modificado.
+- **[LÓGICA]** Corrección crítica del orden de ejecución: El filtro de calidad ahora se aplica después de calcular porosidad para eliminar picos falsos (>35%) antes de calcular saturación.
+- **[ECONOMÍA]** Implementación de HCPV en todos los módulos y reordenamiento del CSV por potencial económico.
+- **[UX]** Visualizador ahora recibe *cutoffs* dinámicos del procesador para total consistencia imagen-dato.
 
-Los archivos se generan en la carpeta Resultados_Fase4_PayZone:
+### Fase 4
 
-/Plots: Imágenes .png de cada pozo (Quad-Combo).
+- Implementación de procesamiento por lotes (*Batch*).
+- Generación de CSV resumen.
 
-/Tablas: Resumen_Reservas_PayZone.csv con el ranking de pozos.
+### Fase 1-3
 
-## 7. Validación y Benchmarking
-
-La herramienta ha sido validada mediante:
-
-Prueba de Escritorio: Comparación celda por celda contra cálculo manual en Excel (Diferencia < 0.5%).
-
-Pickett Plot: Verificación gráfica de $R_w$ y $m$ usando las_pickett.py.
-
-Prueba de Estrés: Procesamiento exitoso de 120 pozos, identificando correctamente pozos secos y descartando falsos positivos por mala calidad de hoyo.
-
-Nota Final: Esta herramienta debe ser utilizada como soporte a la decisión. Se recomienda siempre una inspección visual final de los pozos "Top Ranking" por un petrofísico cualificado.
+- Carga de curvas, normalización de unidades y visualización básica.
