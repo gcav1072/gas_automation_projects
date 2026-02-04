@@ -4,8 +4,10 @@ import numpy as np
 import pandas as pd
 from las_inspect import obtener_curva, inspeccionar_las, calcular_vsh, normalizar_porosidad, calcular_sw, aplicar_filtro_calidad
 
-def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_salida=None, pay_stats=None):
-    fig, ax = plt.subplots(nrows=1, ncols=4, figsize=(14, 8), sharey=True)
+def graficar_quad_combo(df, nombre_pozo="Pozo", guardar=False, ruta_salida=None, pay_stats=None, cut_vsh=0.5, cut_phi=8.0, cut_sw=0.5):
+
+    # Init Plot
+    fig, ax = plt.subplots(nrows=1, ncols=4, figsize=(15, 12), sharey=True)
 
     depth = df.index
     gr    = obtener_curva(df, 'GR')
@@ -65,33 +67,15 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
     ax[2].legend(loc='upper right', fontsize='x-small')
 
     # -------------------------------------------------------------------------
-    # TRACK 4: PAY ZONE (Corregido: Solo pinta si cumple criterios)
+    # TRACK 4: PAY ZONE
     # -------------------------------------------------------------------------
     ax[3].set_xlim(1.0, 0.0)
     
     if 'SW' in df.columns:
-        sw_valid = df['SW'].dropna()
-        ax[3].plot(sw_valid, sw_valid.index, color='black', linewidth=1.0, label='Sw')
-        
-        # --- LÓGICA DE RECONSTRUCCIÓN VISUAL DE PAY ---
-        # Recalculamos la máscara aquí para pintarla (o usamos una pasada si existiera)
-        # Esto asegura que lo que ves en verde ES lo que sumó metros.
-        
-        is_pay = pd.Series(False, index=df.index)
-        
-        # Intentamos replicar criterios estándar o usar columnas pre-calculadas si existieran
-        # Para visualización genérica, usamos criterios medios, PERO si pasaste stats,
-        # intentamos ser consistentes.
-        
-        # Recuperamos curvas críticas
+        # 1. PRIMERO: Definimos las variables necesarias (Movido hacia arriba)
         vsh = df['VSH'] if 'VSH' in df.columns else pd.Series(0, index=df.index)
         
-        # Definimos cutoffs visuales (Deben coincidir con tu batch processor)
-        v_cut_vsh = 0.4    # Un poco más estricto visualmente
-        v_cut_sw = 0.5
-        v_cut_phi = 8.0
-        
-        # Phi promedio
+        # Phi promedio para visualización
         if 'NPHI_FINAL' in df.columns and 'DPHI_FINAL' in df.columns:
             phi_avg = (df['DPHI_FINAL'] + df['NPHI_FINAL']) / 2
         elif 'DPHI_FINAL' in df.columns:
@@ -99,18 +83,25 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
         else:
             phi_avg = pd.Series(0, index=df.index)
 
-        # Máscara
-        mask_pay_visual = (vsh < v_cut_vsh) & (phi_avg >= v_cut_phi) & (df['SW'] < v_cut_sw)
+        # 2. SEGUNDO: Ahora sí podemos crear la máscara usando los argumentos (cut_vsh, etc.)
+        mask_pay_visual = (
+            (vsh < cut_vsh) & 
+            (phi_avg >= cut_phi) & 
+            (df['SW'] < cut_sw)
+        )
         
-        # PINTAR PAY: Rellenamos de verde SOLO donde es Pay real
-        # Usamos 'where' para filtrar el llenado
+        # Graficado
+        sw_valid = df['SW'].dropna()
+        ax[3].plot(sw_valid, sw_valid.index, color='black', linewidth=1.0, label='Sw')
+        
+        # PINTAR PAY: Rellenamos de verde usando la máscara correcta
         ax[3].fill_betweenx(depth, df['SW'], 1.0, 
                            where=mask_pay_visual, 
                            color='lime', alpha=0.5, label='NET PAY')
         
         # Pintar Agua (Azul) para contraste
         ax[3].fill_betweenx(depth, df['SW'], 0.0, 
-                           where=(df['SW'] > v_cut_sw), 
+                           where=(df['SW'] > cut_sw), # Usamos el argumento cut_sw aquí también
                            color='blue', alpha=0.1)
 
     ax[3].set_xlabel("Sw (v/v)", fontsize=9, color='blue')
@@ -132,10 +123,14 @@ def graficar_quad_combo(df, nombre_pozo="Pozo Desconocido", guardar=False, ruta_
     
     # Mostrar Estadísticas
     if pay_stats:
+        # Recuperamos el valor, con 0 como default si no existe
+        hcpv = pay_stats.get('HCPV_m', 0)
+
         stats_text = (
             f"Net Pay: {pay_stats.get('Net_Pay_m', 0)} m\n"
+            f"HCPV:    {hcpv} m\n"
             f"Phi Avg: {pay_stats.get('Phi_Pay_Avg_%', 0)} %\n"
-            f"Sw Avg: {pay_stats.get('Sw_Pay_Avg_Frac', 1.0)} v/v"
+            f"Sw Avg:  {pay_stats.get('Sw_Pay_Avg_Frac', 1.0)} v/v"
         )
         plt.figtext(0.02, 0.95, stats_text, fontsize=9, ha='left', va='top', 
                     bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
@@ -199,14 +194,35 @@ if __name__ == "__main__":
             # Input de Rho con Smart Default
             rho_in = input(f"Rho Matrix (g/cc) [Enter={default_rho} {pef_msg}]: ").strip()
             rho_val = float(rho_in) if rho_in else default_rho
+
+            # --- NUEVOS INPUTS (Simandoux & Normalización) ---
+            print("\n--- Parámetros Avanzados (Simandoux & Vsh) ---")
+            rsh_in = input("R_Shale (ohm.m) [Enter=2.0]: ").strip()
+            rsh_val = float(rsh_in) if rsh_in else 2.0
+
+            use_field_gr = input("¿Usar GR de Campo (Fijo)? [s/N]: ").lower().startswith('s')
+            gr_sand_val = None
+            gr_shale_val = None
+            if use_field_gr:
+                try:
+                   gr_sand_val = float(input("  -> GR Clean (Sand) API: ").strip())
+                   gr_shale_val = float(input("  -> GR Shale (Clay) API: ").strip())
+                except:
+                    print("  Error en inputs GR, usando estadística del pozo.")
+                    gr_sand_val = None
+                    gr_shale_val = None
+
         except: 
-            bs, rw_val, m_val, rho_val = 8.5, 0.05, 2.0, default_rho
+            bs, rw_val, m_val, rho_val, rsh_val = 8.5, 0.05, 2.0, default_rho, 2.0
+            gr_sand_val, gr_shale_val = None, None
             
         # 2. Continuar Proceso Pipeline
-        df = calcular_vsh(df)
+        df = calcular_vsh(df, gr_sand=gr_sand_val, gr_shale=gr_shale_val)
         df = aplicar_filtro_calidad(df, bit_size=bs) # <--- AQUÍ FILTRAMOS
-        df = normalizar_porosidad(df, rho_matrix=rho_val)
-        df = calcular_sw(df, rw=rw_val, m=m_val)
+        df = normalizar_porosidad(df, rho_matrix=rho_val, usar_pef=True) # Activamos Variable Matrix
+        
+        # Usamos Simandoux por defecto ahora
+        df = calcular_sw(df, rw=rw_val, m=m_val, modelo='simandoux', r_shale=rsh_val)
         
         # 3. Calcular Net Pay y Estadísticas (Lógica copiada de las_batch_processor.py)
         
@@ -264,17 +280,26 @@ if __name__ == "__main__":
                 phi_pay_mean = phi_para_corte[mask_pay].mean()
                 sw_pay_mean  = df.loc[mask_pay, 'SW'].mean()
                 vsh_pay_mean = df.loc[mask_pay, 'VSH'].mean()
+                
+                # --- NUEVO CÁLCULO: HCPV ---
+                # Net Pay * Porosidad (fracción) * (1 - Sw)
+                hcpv_val = net_pay_thk * (phi_pay_mean / 100) * (1 - sw_pay_mean)
+            else:
+                hcpv_val = 0
 
         # Preparar diccionario de stats
         stats = {
             'Net_Pay_m': round(net_pay_thk, 2),
+            'HCPV_m':    round(hcpv_val, 2),
             'Phi_Pay_Avg_%': round(phi_pay_mean, 2) if not np.isnan(phi_pay_mean) else 0,
             'Sw_Pay_Avg_Frac': round(sw_pay_mean, 3) if not np.isnan(sw_pay_mean) else 1.0,
             'Vsh_Pay_Avg_Frac': round(vsh_pay_mean, 3) if not np.isnan(vsh_pay_mean) else None
         }
         
-        print(f"Resultados: Pay={stats['Net_Pay_m']}m, Phi={stats['Phi_Pay_Avg_%']}%, Sw={stats['Sw_Pay_Avg_Frac']}")
+        print(f"Resultados: Pay={stats['Net_Pay_m']}m, HCPV={stats['HCPV_m']}m, Phi={stats['Phi_Pay_Avg_%']}%, Sw={stats['Sw_Pay_Avg_Frac']}")
 
         # 4. Graficar
         print("Generando gráfico...")
-        graficar_quad_combo(df, nombre_pozo=archivo_nombre, guardar=False, pay_stats=stats)
+        graficar_quad_combo(df, nombre_pozo=archivo_nombre, guardar=False, 
+                            pay_stats=stats, 
+                            cut_vsh=cut_vsh, cut_phi=cut_phi, cut_sw=cut_sw)

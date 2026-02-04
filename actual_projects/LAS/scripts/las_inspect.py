@@ -62,25 +62,32 @@ def inspeccionar_las(las_file):
         print(f"Error leyendo {os.path.basename(las_file)}: {e}")
         return None
 
-def calcular_vsh(df):
+def calcular_vsh(df, gr_sand=None, gr_shale=None):
     gr = obtener_curva(df, 'GR')
     if gr.isna().all(): return df 
 
     gr_clean = gr.dropna()
     if gr_clean.empty: return df
 
-    # Usamos percentiles para evitar picos ruidosos (spikes)
-    gr_min = np.percentile(gr_clean, 5)
-    gr_max = np.percentile(gr_clean, 95)
+    # Normalización: Usar parámetros de campo (Si se dan) o estadística del pozo
+    if gr_sand is not None and gr_shale is not None:
+        gr_min = float(gr_sand)
+        gr_max = float(gr_shale)
+    else:
+        # Usamos percentiles para evitar picos ruidosos (spikes)
+        gr_min = np.percentile(gr_clean, 5)
+        gr_max = np.percentile(gr_clean, 95)
     
     # CRITERIO DE ROBUSTEZ:
-    # Si la diferencia entre max y min es ridícula (ej. < 20 API), 
-    # la normalización es matemática basura.
-    if gr_max - gr_min < 20:
+    # Si la diferencia es ridícula (y no fue forzada por usuario), asumimos log plano
+    if (gr_sand is None) and (gr_max - gr_min < 20):
          # Asumir que es Arcilla (No Pay) por seguridad si el log es plano/muerto
          vsh = pd.Series(1.0, index=df.index) 
     else:
-         vsh = (gr - gr_min) / (gr_max - gr_min)
+         # Evitar división por cero
+         denom = gr_max - gr_min
+         if denom == 0: denom = 0.001
+         vsh = (gr - gr_min) / denom
     
     df['VSH'] = np.clip(vsh, 0, 1) 
     return df
@@ -154,17 +161,42 @@ def aplicar_filtro_calidad(df, bit_size=8.5, tol_cal=2.5, tol_drho=0.15):
             
     return df
 
-def normalizar_porosidad(df, rho_matrix=2.65, rho_fluid=1.0):
+def normalizar_porosidad(df, rho_matrix=2.65, rho_fluid=1.0, usar_pef=True):
     den = obtener_curva(df, 'RHOB') 
     if den.isna().all(): den = obtener_curva(df, 'DPHI')
     neu = obtener_curva(df, 'NPHI') 
+    pef = obtener_curva(df, 'PEF')
+
+    # --- Lógica de Matriz Variable basada en PEF (Punto a Punto) ---
+    # Si activado, recalculamos una curva de rho_matrix en lugar de usar un escalar
+    use_variable_matrix = False
+    rho_ma_curve = rho_matrix # Default escalar
+
+    if usar_pef and not pef.isna().all() and not den.isna().all():
+        use_variable_matrix = True
+        # Crear curva de Matriz Dinámica
+        # Si PEF < 2.5 -> Arenisca (2.65)
+        # Si PEF > 4.5 -> Caliza (2.71)
+        # Interpolación o Bloques simple:
+        conditions = [
+            (pef < 2.5),
+            (pef >= 2.5) & (pef < 4.0),
+            (pef >= 4.0)
+        ]
+        choices = [2.65, 2.75, 2.71] # 2.75 asume mezcla calcárea/arcillosa en transición
+        rho_ma_curve = np.select(conditions, choices, default=2.65)
+        df['RHOMA_AUTO'] = rho_ma_curve # Guardamos para debug
+
 
     if not den.isna().all():
         valid = den[den > 0]
         # Detectar si la curva viene en g/cc o en %
         if not valid.empty and valid.mean() > 1.5: 
             # Está en g/cc, calculamos porosidad
-            df['DPHI_FINAL'] = ((rho_matrix - den) / (rho_matrix - rho_fluid)) * 100
+            if use_variable_matrix:
+                df['DPHI_FINAL'] = ((rho_ma_curve - den) / (rho_ma_curve - rho_fluid)) * 100
+            else:
+                df['DPHI_FINAL'] = ((rho_matrix - den) / (rho_matrix - rho_fluid)) * 100
         elif not valid.empty and valid.max() <= 1.0: 
             # Está en V/V
             df['DPHI_FINAL'] = den * 100
@@ -190,7 +222,12 @@ def normalizar_porosidad(df, rho_matrix=2.65, rho_fluid=1.0):
             
     return df
 
-def calcular_sw(df, a=1, m=2, n=2, rw=0.05):
+def calcular_sw(df, a=1, m=2, n=2, rw=0.05, modelo='simandoux', r_shale=2.0):
+    """
+    Calcula Sw usando Archie (Clean) o Simandoux (Shaly).
+    modelo: 'archie' o 'simandoux'
+    r_shale: Resistividad de la arcilla (ohm.m)
+    """
     rt = obtener_curva(df, 'RDEP')
     
     if 'DPHI_FINAL' in df.columns and 'NPHI_FINAL' in df.columns:
@@ -203,17 +240,56 @@ def calcular_sw(df, a=1, m=2, n=2, rw=0.05):
         return df
 
     phi = phi_pct / 100
-    mask_valid = (phi > 0.001) & (rt > 0.1)
+    vsh = df['VSH'] if 'VSH' in df.columns else pd.Series(0, index=df.index)
     
+    # Mask de validez general
+    mask_valid = (phi > 0.001) & (rt > 0.1)
     sw = pd.Series(1.0, index=df.index)
     
-    try:
-        # Ecuación de Archie Standard
-        term = (a * rw) / (np.power(phi[mask_valid], m) * rt[mask_valid])
-        sw_calc = np.power(term, (1/n))
-        sw.loc[mask_valid] = np.clip(sw_calc, 0, 1)
-    except:
-        pass
+    # --- Modelo ARCHIE ---
+    if modelo == 'archie':
+        try:
+            term = (a * rw) / (np.power(phi[mask_valid], m) * rt[mask_valid])
+            sw_calc = np.power(term, (1/n))
+            sw.loc[mask_valid] = np.clip(sw_calc, 0, 1)
+        except:
+            pass
+
+    # --- Modelo SIMANDOUX (Modified) ---
+    elif modelo == 'simandoux':
+        try:
+            idx = mask_valid
+            phi_z = phi[idx]
+            rt_z = rt[idx]
+            vsh_z = vsh[idx]
+            
+            # --- CORRECCIÓN: SIMANDOUX MODIFICADO ---
+            # El término de arena debe penalizarse por (1 - Vsh)
+            # Evitamos división por cero en (1-Vsh) con un clip suave
+            factor_vsh = 1 - vsh_z
+            factor_vsh = factor_vsh.clip(lower=0.01) # Seguridad numérica
+            
+            # Coeficiente A (Término cuadrático: Arena)
+            # Modified Simandoux: Phi^m / (a * Rw * (1-Vsh))
+            coef_a = (np.power(phi_z, m)) / (a * rw * factor_vsh)
+            
+            # Coeficiente B (Término lineal: Arcilla)
+            safe_r_shale = r_shale if r_shale > 0 else 0.1
+            coef_b = vsh_z / safe_r_shale
+            
+            # Coeficiente C (Constante)
+            coef_c = - (1 / rt_z)
+            
+            # Resolución Cuadrática
+            discriminante = coef_b**2 - (4 * coef_a * coef_c)
+            discriminante[discriminante < 0] = 0
+            
+            sw_calc = (-coef_b + np.sqrt(discriminante)) / (2 * coef_a)
+            sw.loc[idx] = np.clip(sw_calc, 0, 1)
+            
+        except Exception as e:
+            print(f"Error en Simandoux: {e}")
+            pass
 
     df['SW'] = sw
     return df

@@ -11,7 +11,7 @@ from las_visualizer import graficar_quad_combo
 # --- CONFIGURACIÓN DE RUTAS ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 INPUT_FOLDER = os.path.join(SCRIPT_DIR, '..', 'LAS_data') 
-OUTPUT_BASE = os.path.join(SCRIPT_DIR, '..', 'Resultados_Fase4_PayZone') # Carpeta nueva
+OUTPUT_BASE = os.path.join(SCRIPT_DIR, '..', 'Resultados_Fase 5: HCPV') # Carpeta nueva
 IMG_FOLDER = os.path.join(OUTPUT_BASE, 'Plots')
 EXCEL_FOLDER = os.path.join(OUTPUT_BASE, 'Tablas')
 
@@ -22,7 +22,9 @@ def setup_folders():
 
 def procesar_lote(matriz_rho=None, cutoff_vsh=0.5, cutoff_phi=8.0, 
                 rw=0.05, a=1, m=2, n=2, cutoff_sw=0.5,
-                cutoff_dn_sep=15.0): # <--- NUEVO PARÁMETRO (15% por defecto)
+                cutoff_dn_sep=15.0, # <--- 15% por defecto
+                r_shale=2.0, # <--- Simandoux
+                gr_sand=None, gr_shale=None): # <--- Normalización de Campo
     
     setup_folders()
     
@@ -35,6 +37,11 @@ def procesar_lote(matriz_rho=None, cutoff_vsh=0.5, cutoff_phi=8.0,
     print(f"\n--- INICIANDO PROCESAMIENTO (CÁLCULO EN PAY ZONE) ---")
     print(f"Archivos: {len(archivos)}")
     print(f"Rho Matriz: {rho_mode_str}")
+    print(f"Modelo Sw: Simandoux (R_Shale={r_shale})")
+    if gr_sand and gr_shale:
+        print(f"Normalización Vsh: Campo (Sand={gr_sand}, Shale={gr_shale})")
+    else:
+        print(f"Normalización Vsh: Estadística por Pozo (P05-P95)")
     print(f"Criterios Pay: Vsh<{cutoff_vsh} | Phi>{cutoff_phi}% | Sw<{cutoff_sw}")
     
     resumen_pozos = []
@@ -54,16 +61,13 @@ def procesar_lote(matriz_rho=None, cutoff_vsh=0.5, cutoff_phi=8.0,
             
         try:
             # 2. Cálculos Petrofísicos
-            df = calcular_vsh(df)
-
-
-
-            df = aplicar_filtro_calidad(df, bit_size=8.5) 
-            # --------------------------------
-
-            # --- LÓGICA RHO MATRIX INTELIGENTE ---
-            rho_final = 2.65 # Fallback seguro
             
+            # A) Primero: Vshale
+            df = calcular_vsh(df, gr_sand=gr_sand, gr_shale=gr_shale)
+
+            # B) Segundo: Determinar Densidad Matriz y Calcular Porosidad (DPHI_FINAL)
+            # --- LÓGICA RHO MATRIX INTELIGENTE ---
+            rho_final = 2.65 
             if matriz_rho is not None:
                 rho_final = float(matriz_rho)
             else:
@@ -86,8 +90,15 @@ def procesar_lote(matriz_rho=None, cutoff_vsh=0.5, cutoff_phi=8.0,
                 except:
                     print("   -> Auto Rho: 2.65 (Error detección)")
 
-            df = normalizar_porosidad(df, rho_matrix=rho_final)
-            df = calcular_sw(df, a=a, m=m, n=n, rw=rw)
+            # AHORA calculamos las curvas de porosidad
+            df = normalizar_porosidad(df, rho_matrix=rho_final, usar_pef=True)
+
+            # C) Tercero: AHORA aplicamos el Filtro de Calidad
+            # Como DPHI_FINAL ya existe, el filtro >35% funcionará y eliminará la basura.
+            df = aplicar_filtro_calidad(df, bit_size=8.5) 
+
+            # D) Cuarto: Finalmente calculamos Sw (con datos limpios)
+            df = calcular_sw(df, a=a, m=m, n=n, rw=rw, modelo='simandoux', r_shale=r_shale)
             
             # 3. Detectar STEP (Metros)
             if len(df) > 1:
@@ -141,9 +152,17 @@ def procesar_lote(matriz_rho=None, cutoff_vsh=0.5, cutoff_phi=8.0,
                     sw_pay_mean  = df.loc[mask_pay, 'SW'].mean()
                     vsh_pay_mean = df.loc[mask_pay, 'VSH'].mean()
 
+                    # --- NUEVO: CÁLCULO DE HCPV (VOLUMEN DE HIDROCARBURO) ---
+                    # Fórmula: Espesor * Porosidad * (1 - Sw)
+                    # Ojo: phi_pay_mean está en % (ej. 24.5), hay que dividir entre 100.
+                    hcpv_val = net_pay_thk * (phi_pay_mean / 100) * (1 - sw_pay_mean)
+                else:
+                    hcpv_val = 0
+
             # Preparar diccionario de stats para pasar al visualizador
             stats_dict = {
                 'Net_Pay_m': round(net_pay_thk, 2),
+                'HCPV_m':    round(hcpv_val, 2),
                 'Phi_Pay_Avg_%': round(phi_pay_mean, 2) if not np.isnan(phi_pay_mean) else 0,
                 'Sw_Pay_Avg_Frac': round(sw_pay_mean, 3) if not np.isnan(sw_pay_mean) else 1.0,
                 'Vsh_Pay_Avg_Frac': round(vsh_pay_mean, 3) if not np.isnan(vsh_pay_mean) else None
@@ -151,12 +170,15 @@ def procesar_lote(matriz_rho=None, cutoff_vsh=0.5, cutoff_phi=8.0,
 
             # 5. Generar Gráfico (Ahora con stats)
             ruta_imagen = os.path.join(IMG_FOLDER, f"{nombre_pozo}_Eval.png")
-            graficar_quad_combo(df, nombre_pozo=nombre_pozo, guardar=True, ruta_salida=ruta_imagen, pay_stats=stats_dict)
+            graficar_quad_combo(df, nombre_pozo=nombre_pozo, guardar=True, 
+                    ruta_salida=ruta_imagen, pay_stats=stats_dict,
+                    cut_vsh=cutoff_vsh, cut_phi=cutoff_phi, cut_sw=cutoff_sw)
             
             # Guardar datos
             resumen_pozos.append({
                 'Pozo': nombre_pozo,
                 'Net_Pay_m': round(net_pay_thk, 2),
+                'HCPV_m':    round(hcpv_val, 2),
                 'Phi_Pay_Avg_%': round(phi_pay_mean, 2) if not np.isnan(phi_pay_mean) else 0,
                 'Sw_Pay_Avg_Frac': round(sw_pay_mean, 3) if not np.isnan(sw_pay_mean) else 1.0,
                 'Vsh_Pay_Avg_Frac': round(vsh_pay_mean, 3) if not np.isnan(vsh_pay_mean) else None,
@@ -174,12 +196,14 @@ def procesar_lote(matriz_rho=None, cutoff_vsh=0.5, cutoff_phi=8.0,
         df_resumen = pd.DataFrame(resumen_pozos)
         
         # Ordenar columnas (Las más importantes primero)
-        cols_order = ['Pozo', 'Status', 'Net_Pay_m', 'Phi_Pay_Avg_%', 'Sw_Pay_Avg_Frac', 'Vsh_Pay_Avg_Frac', 'Tope_m', 'Base_m']
+        cols_order = ['Pozo', 'Status', 'Net_Pay_m', 'HCPV_m', 'Phi_Pay_Avg_%', 'Sw_Pay_Avg_Frac', 'Vsh_Pay_Avg_Frac', 'Tope_m', 'Base_m']
         final_cols = [c for c in cols_order if c in df_resumen.columns]
         df_resumen = df_resumen[final_cols]
         
         # Ranking
-        if 'Net_Pay_m' in df_resumen.columns:
+        if 'HCPV_m' in df_resumen.columns:
+            df_resumen.sort_values(by='HCPV_m', ascending=False, inplace=True)
+        elif 'Net_Pay_m' in df_resumen.columns:
             df_resumen.sort_values(by='Net_Pay_m', ascending=False, inplace=True)
 
         ruta_csv = os.path.join(EXCEL_FOLDER, "Resumen_Reservas_PayZone.csv")
@@ -199,11 +223,28 @@ if __name__ == "__main__":
     try:
         rho_in = input("1. Densidad Matriz [Enter=AUTO/PEF o Valor]: ").strip()
         rho_ma = float(rho_in) if rho_in else None # None activa el modo Auto
+        
         rw_val = float(input("2. Rw (Enter=0.05): ").strip() or 0.05)
-        # Cutoffs
-        cut_phi = float(input("3. Cutoff Porosidad % (Enter=8.0): ").strip() or 8.0)
-        cut_sw  = float(input("4. Cutoff Sw (Enter=0.5): ").strip() or 0.5)
-    except:
-        rho_ma, rw_val, cut_phi, cut_sw = 2.65, 0.05, 8.0, 0.5
+        
+        # Nuevos inputs
+        print("--- Parámetros Simandoux ---")
+        r_shale_val = float(input("3. R_Shale (Enter=2.0): ").strip() or 2.0)
+        
+        print("--- Normalización Vsh (Opcional) ---")
+        use_field = input("4. ¿Usar GR Fijo de Campo? [s/N]: ").lower().startswith('s')
+        gr_sand_val, gr_shale_val = None, None
+        if use_field:
+            gr_sand_val = float(input("   -> GR Sand: ").strip())
+            gr_shale_val = float(input("   -> GR Shale: ").strip())
 
-    procesar_lote(matriz_rho=rho_ma, rw=rw_val, cutoff_phi=cut_phi, cutoff_sw=cut_sw)
+        # Cutoffs
+        print("--- Cutoffs Pay Zone ---")
+        cut_phi = float(input("5. Cutoff Porosidad % (Enter=8.0): ").strip() or 8.0)
+        cut_sw  = float(input("6. Cutoff Sw (Enter=0.5): ").strip() or 0.5)
+    except:
+        rho_ma, rw_val, r_shale_val = 2.65, 0.05, 2.0
+        gr_sand_val, gr_shale_val = None, None
+        cut_phi, cut_sw = 8.0, 0.5
+
+    procesar_lote(matriz_rho=rho_ma, rw=rw_val, cutoff_phi=cut_phi, cutoff_sw=cut_sw,
+                  r_shale=r_shale_val, gr_sand=gr_sand_val, gr_shale=gr_shale_val)
